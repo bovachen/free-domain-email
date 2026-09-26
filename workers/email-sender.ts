@@ -3,12 +3,16 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 /**
- * Email sending via Cloudflare Email Service binding.
+ * Outbound email delivery.
  *
- * Uses the `send_email` Worker binding (`env.EMAIL.send()`) to send emails.
+ * Sends through Resend when the `RESEND_API_KEY` secret is set, otherwise
+ * through the Cloudflare Email Service `send_email` binding (`env.EMAIL.send()`).
  *
  * See: https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
+ *      https://resend.com/docs/api-reference/emails/send-email
  */
+
+import type { Env } from "./types";
 
 export interface SendEmailParams {
 	to: string | string[];
@@ -29,18 +33,74 @@ export interface SendEmailParams {
 	headers?: Record<string, string>;
 }
 
-/**
- * Send an email using the Cloudflare Email Service binding.
- *
- * @param binding  - The `EMAIL` SendEmail binding from env
- * @param params   - Email parameters (to, from, subject, body, etc.)
- * @returns The send result with messageId
- * @throws On validation or delivery errors (error has `.code` property)
- */
-export async function sendEmail(
-	binding: SendEmail,
+type Address = NonNullable<SendEmailParams["replyTo"]>;
+
+/** RFC 5322 mailbox: the bare address, or `"Name" <address>` when a name is set. */
+function formatAddress(address: Address): string {
+	if (typeof address === "string") return address;
+	if (!address.name) return address.email;
+	return `"${address.name.replace(/["\\]/g, "\\$&")}" <${address.email}>`;
+}
+
+async function sendWithResend(
+	apiKey: string,
 	params: SendEmailParams,
 ): Promise<{ messageId: string }> {
+	const body: Record<string, unknown> = {
+		from: formatAddress(params.from),
+		to: params.to,
+		subject: params.subject,
+	};
+
+	if (params.html) body.html = params.html;
+	if (params.text) body.text = params.text;
+	if (params.cc) body.cc = params.cc;
+	if (params.bcc) body.bcc = params.bcc;
+	if (params.replyTo) body.reply_to = formatAddress(params.replyTo);
+
+	if (params.headers && Object.keys(params.headers).length > 0) {
+		body.headers = params.headers;
+	}
+
+	if (params.attachments && params.attachments.length > 0) {
+		body.attachments = params.attachments.map((att) => ({
+			content: att.content,
+			filename: att.filename,
+			content_type: att.type,
+			...(att.contentId ? { content_id: att.contentId } : {}),
+		}));
+	}
+
+	const res = await fetch("https://api.resend.com/emails", {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify(body),
+	});
+	const data = (await res.json().catch(() => ({}))) as { id?: string; message?: string };
+	if (!res.ok || !data.id) {
+		throw new Error(`Resend 发信失败（${res.status}）：${data.message || res.statusText}`);
+	}
+	return { messageId: data.id };
+}
+
+/**
+ * Send an email through Resend (when `RESEND_API_KEY` is set) or the
+ * Cloudflare Email Service binding.
+ *
+ * @param env      - Worker env; uses `RESEND_API_KEY` if present, else the `EMAIL` binding
+ * @param params   - Email parameters (to, from, subject, body, etc.)
+ * @returns The send result with messageId
+ * @throws On validation or delivery errors
+ */
+export async function sendEmail(
+	env: Pick<Env, "EMAIL" | "RESEND_API_KEY">,
+	params: SendEmailParams,
+): Promise<{ messageId: string }> {
+	if (env.RESEND_API_KEY) return sendWithResend(env.RESEND_API_KEY, params);
+
 	const message: Record<string, unknown> = {
 		to: params.to,
 		from: params.from,
@@ -67,6 +127,6 @@ export async function sendEmail(
 		}));
 	}
 
-	const result = await binding.send(message as any);
+	const result = await env.EMAIL.send(message as any);
 	return { messageId: result.messageId };
 }

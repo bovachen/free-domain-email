@@ -256,7 +256,7 @@ async function sendReplyFromTelegram(
 		buildQuotedReplyBlock({ date: original.date, sender: original.sender || to, body: original.body ?? undefined });
 
 	try {
-		await sendEmail(env.EMAIL, {
+		await sendEmail(env, {
 			to,
 			from: ref.mailboxId,
 			subject,

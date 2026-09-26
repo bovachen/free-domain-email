@@ -6,6 +6,8 @@ import { Banner, Button, Input } from "@cloudflare/kumo";
 import { FloppyDiskIcon, PaperPlaneTiltIcon, XIcon } from "@phosphor-icons/react";
 import { useParams } from "react-router";
 import { useComposeForm } from "~/hooks/useComposeForm";
+import { useMailboxes } from "~/queries/mailboxes";
+import { useUIStore } from "~/hooks/useUIStore";
 import RichTextEditor from "./RichTextEditor";
 
 export default function ComposePanel() {
@@ -14,6 +16,9 @@ export default function ComposePanel() {
 		folder: string;
 	}>();
 
+	const { composeMailboxId, setComposeMailboxId } = useUIStore();
+	const { data: mailboxes = [] } = useMailboxes();
+	const resolvedFrom = mailboxId || composeMailboxId || mailboxes[0]?.id;
 	const {
 		to,
 		setTo,
@@ -35,7 +40,7 @@ export default function ComposePanel() {
 		handleSend,
 		closeCompose,
 		closePanel,
-	} = useComposeForm(mailboxId, folder);
+	} = useComposeForm(resolvedFrom, folder);
 
 	return (
 		<div className="flex flex-col h-full bg-kumo-base">
@@ -64,6 +69,24 @@ export default function ComposePanel() {
 					{error && <Banner variant="error" text={error} />}
 
 					<div className="space-y-3">
+						{mailboxes.length > 1 && (
+							<div className="flex items-center gap-2">
+								<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0">
+									From
+								</label>
+								<select
+									className="flex-1 rounded-md border border-kumo-line bg-kumo-base px-2 py-1.5 text-sm"
+									value={resolvedFrom || ""}
+									onChange={(e) => setComposeMailboxId(e.target.value)}
+								>
+									{mailboxes.map((box) => (
+										<option key={box.id} value={box.id}>
+											{box.email}
+										</option>
+									))}
+								</select>
+							</div>
+						)}
 						<div className="flex items-center gap-2">
 							<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0">
 								To

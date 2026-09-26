@@ -6,6 +6,10 @@
 	"observability": {
 		"enabled": true
 	},
+	// Telegram polling: pulls button taps / replies every minute (see workers/lib/telegram-webhook.ts).
+	"triggers": {
+		"crons": ["* * * * *"]
+	},
 	"compatibility_flags": [
 		"nodejs_compat"
 	],

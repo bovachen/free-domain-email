@@ -15,7 +15,7 @@ import {
 import { EnvelopeIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { Link as RouterLink } from "react-router";
+import { Link as RouterLink, Navigate } from "react-router";
 import api from "~/services/api";
 import {
 	useCreateMailbox,
@@ -127,6 +127,10 @@ export default function HomeRoute() {
 			setIsDeleting(false);
 		}
 	};
+
+	if (mailboxesFetched && mailboxes.length > 0) {
+		return <Navigate to="/mail/emails/inbox" replace />;
+	}
 
 	const isConfigured = emailAddresses.length > 0;
 	const accounts = isConfigured

@@ -164,8 +164,9 @@ function buildInitialComposeFields(
 
 export function useComposeForm(mailboxId?: string, _folder?: string) {
 	const toastManager = useKumoToastManager();
-	const { composeOptions, closePanel, closeCompose } = useUIStore();
-	const { data: currentMailbox } = useMailbox(mailboxId);
+	const { composeOptions, closePanel, closeCompose, composeMailboxId, selectedMailboxId } = useUIStore();
+	const resolvedMailboxId = mailboxId || composeMailboxId || selectedMailboxId || undefined;
+	const { data: currentMailbox } = useMailbox(resolvedMailboxId);
 	const sendEmailMutation = useSendEmail();
 	const saveDraftMutation = useSaveDraft();
 	const replyMutation = useReplyToEmail();
@@ -210,9 +211,9 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 	}, [composeOptions, currentMailbox?.email, sigBlock]);
 
 	const handleSaveDraft = async () => {
-		if (!mailboxId || isSending) return; setIsSavingDraft(true); setError(null);
+		if (!resolvedMailboxId || isSending) return; setIsSavingDraft(true); setError(null);
 		try {
-			await saveDraftMutation.mutateAsync({ mailboxId, draft: {
+			await saveDraftMutation.mutateAsync({ mailboxId: resolvedMailboxId, draft: {
 				to,
 				cc: cc || undefined,
 				bcc: bcc || undefined,
@@ -234,7 +235,7 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 
 	const handleSend = async (e: FormEvent, onClose: () => void) => {
 		e.preventDefault(); if (isSending) return; setError(null);
-		if (!currentMailbox || !mailboxId) { setError("No mailbox selected."); return; }
+		if (!currentMailbox || !resolvedMailboxId) { setError("No mailbox selected."); return; }
 		const toRecipients = splitEmailList(to);
 		if (toRecipients.length === 0) { setError("Add at least one recipient."); return; }
 		const ccRecipients = splitEmailList(cc); const bccRecipients = splitEmailList(bcc);
@@ -252,10 +253,10 @@ export function useComposeForm(mailboxId?: string, _folder?: string) {
 		const draftId = composeOptions.draftEmail?.id; const mode = composeOptions.mode; const originalId = composeOptions.originalEmail?.id || composeOptions.draftEmail?.in_reply_to;
 		setIsSending(true); toastManager.add({ title: "Sending email..." });
 		try {
-			if ((mode === "reply" || mode === "reply-all") && originalId) await replyMutation.mutateAsync({ mailboxId, emailId: originalId, email: emailData });
-			else if (mode === "forward" && originalId) await forwardMutation.mutateAsync({ mailboxId, emailId: originalId, email: emailData });
-			else await sendEmailMutation.mutateAsync({ mailboxId, email: emailData });
-			if (draftId) deleteEmailMutation.mutate({ mailboxId, id: draftId });
+			if ((mode === "reply" || mode === "reply-all") && originalId) await replyMutation.mutateAsync({ mailboxId: resolvedMailboxId, emailId: originalId, email: emailData });
+			else if (mode === "forward" && originalId) await forwardMutation.mutateAsync({ mailboxId: resolvedMailboxId, emailId: originalId, email: emailData });
+			else await sendEmailMutation.mutateAsync({ mailboxId: resolvedMailboxId, email: emailData });
+			if (draftId) deleteEmailMutation.mutate({ mailboxId: resolvedMailboxId, id: draftId });
 			toastManager.add({ title: "Email sent!" });
 			onClose();
 		} catch (err: unknown) { const message = (err instanceof Error ? err.message : null) || "Failed to send email."; setError(message); toastManager.add({ title: message, variant: "error" }); }

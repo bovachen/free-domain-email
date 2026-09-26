@@ -48,6 +48,7 @@ export interface Email {
 	participants?: string;
 	needs_reply?: boolean;
 	has_draft?: boolean;
+	mailbox_id?: string;
 }
 
 export interface Attachment {
@@ -63,4 +64,11 @@ export interface Folder {
 	id: string;
 	name: string;
 	unreadCount: number;
+}
+
+export interface BlacklistEntry {
+	address: string;
+	createdAt: string;
+	reason?: string;
+	mailboxId?: string;
 }

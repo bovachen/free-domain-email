@@ -15,7 +15,7 @@ export default function Header() {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const [searchParams] = useSearchParams();
-	const { toggleSidebar, toggleAgentPanel, isAgentPanelOpen } = useUIStore();
+	const { toggleSidebar, toggleAgentPanel, isAgentPanelOpen, selectedMailboxId } = useUIStore();
 
 	// Sync search input with URL query param so it stays populated
 	const urlQuery = searchParams.get("q") || "";
@@ -26,17 +26,25 @@ export default function Header() {
 	}, [urlQuery, location.pathname]);
 
 	const performSearch = () => {
-		if (mailboxId && searchQuery.trim()) {
-			const q = searchQuery.trim();
-			navigate(`/mailbox/${mailboxId}/search?q=${encodeURIComponent(q)}`);
-			setIsSearchExpanded(false);
+		if (!searchQuery.trim()) return;
+		const q = searchQuery.trim();
+		const box = mailboxId || selectedMailboxId;
+		if (box) {
+			navigate(`/mail/mailbox/${encodeURIComponent(box)}/search?q=${encodeURIComponent(q)}`);
+		} else {
+			navigate(`/mail/emails/inbox`);
 		}
+		setIsSearchExpanded(false);
 	};
 
 	const clearSearch = () => {
 		setSearchQuery("");
-		if (location.pathname.includes("/search") && mailboxId) {
-			navigate(`/mailbox/${mailboxId}/emails/inbox`);
+		if (location.pathname.includes("/search")) {
+			if (mailboxId) {
+				navigate(`/mail/mailbox/${encodeURIComponent(mailboxId)}/emails/inbox`);
+			} else {
+				navigate("/mail/emails/inbox");
+			}
 		}
 	};
 

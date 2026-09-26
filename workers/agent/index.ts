@@ -28,6 +28,7 @@ import {
 	toolMarkEmailRead,
 	toolMoveEmail,
 	toolDiscardDraft,
+	toolReportSpam,
 } from "../lib/tools";
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
@@ -244,7 +245,7 @@ function createEmailTools(env: Env, mailboxId: string) {
 
 		move_email: defineTool({
 			description:
-				"Move an email to a different folder (inbox, sent, draft, archive, trash).",
+				"Move an email to a different folder (inbox, sent, draft, archive, spam, trash).",
 			parameters: z.object({
 				emailId: z.string().describe("The email ID"),
 				folderId: z
@@ -253,6 +254,17 @@ function createEmailTools(env: Env, mailboxId: string) {
 			}),
 			execute: async ({ emailId, folderId }): Promise<unknown> => {
 				return toolMoveEmail(env, mailboxId, emailId, folderId);
+			},
+		}),
+
+		report_spam: defineTool({
+			description:
+				"Report an email as spam, move it (and other mail from the same sender) to Spam, and blacklist the sender so future messages skip the inbox.",
+			parameters: z.object({
+				emailId: z.string().describe("The email ID to report as spam"),
+			}),
+			execute: async ({ emailId }): Promise<unknown> => {
+				return toolReportSpam(env, mailboxId, emailId);
 			},
 		}),
 

@@ -15,6 +15,33 @@ import {
 	buildThreadingHeaders,
 	listMailboxes,
 } from "./lib/email-helpers";
+import {
+	configuredDomains,
+	ensureMailbox,
+	getWildcardSettings,
+	isWildcardEnabled,
+	setWildcardSettings,
+} from "./lib/domain-settings";
+import {
+	addToBlacklist,
+	getBlacklist,
+	isBlacklisted,
+	moveSenderToSpam,
+	removeFromBlacklist,
+	reportEmailAsSpam,
+} from "./lib/blacklist";
+import {
+	discoverTelegramChatId,
+	getTelegramSettings,
+	notifyNewEmail,
+	registerTelegramWebhook,
+	sendTelegramTest,
+	setTelegramSettings,
+	TELEGRAM_WEBHOOK_PATH,
+	toPublicTelegramSettings,
+	unregisterTelegramWebhook,
+} from "./lib/telegram";
+import { getPollHeartbeat, handleTelegramUpdate, type TelegramUpdate } from "./lib/telegram-webhook";
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
@@ -85,11 +112,187 @@ app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 
 // -- Config ---------------------------------------------------------
 
-app.get("/api/v1/config", (c) => {
-	const domainsRaw = c.env.DOMAINS || "";
-	const domains = domainsRaw.split(",").map((d) => d.trim()).filter(Boolean);
+app.get("/api/v1/config", async (c) => {
+	const domains = configuredDomains(c.env);
 	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
-	return c.json({ domains, emailAddresses });
+	const wildcard = await getWildcardSettings(c.env);
+	return c.json({ domains, emailAddresses, wildcard });
+});
+
+app.get("/api/v1/settings/wildcard", async (c) => {
+	return c.json(await getWildcardSettings(c.env));
+});
+
+app.put("/api/v1/settings/wildcard", async (c) => {
+	const body = (await c.req.json()) as Record<string, boolean>;
+	return c.json(await setWildcardSettings(c.env, body));
+});
+
+app.get("/api/v1/settings/telegram", async (c) => {
+	const [settings, heartbeat] = await Promise.all([
+		getTelegramSettings(c.env.BUCKET),
+		getPollHeartbeat(c.env.BUCKET),
+	]);
+	// Until an Inbox URL is saved, show the origin serving this UI as the default.
+	const inboxBaseUrl = settings.inboxBaseUrl || new URL(c.req.url).origin;
+	return c.json(toPublicTelegramSettings({ ...settings, inboxBaseUrl }, heartbeat));
+});
+
+app.put("/api/v1/settings/telegram", async (c) => {
+	const body = (await c.req.json()) as {
+		enabled?: boolean;
+		botToken?: string;
+		chatId?: string;
+		inboxBaseUrl?: string;
+		polling?: boolean;
+	};
+	const current = await getTelegramSettings(c.env.BUCKET);
+	// Whitelist fields: webhookSecret is only ever set by webhook registration.
+	const saved = await setTelegramSettings(c.env.BUCKET, {
+		enabled: body.enabled,
+		botToken: body.botToken,
+		chatId: body.chatId,
+		// Alert links and the webhook need an absolute URL; default to the origin serving this UI.
+		inboxBaseUrl: body.inboxBaseUrl || (current.inboxBaseUrl ? undefined : new URL(c.req.url).origin),
+		polling: body.polling,
+	});
+	return c.json(toPublicTelegramSettings(saved));
+});
+
+app.post("/api/v1/settings/telegram/discover", async (c) => {
+	const settings = await getTelegramSettings(c.env.BUCKET);
+	if (!settings.botToken) return c.json({ error: "Save a bot token first" }, 400);
+	if (settings.webhookSecret || settings.polling) {
+		return c.json({ error: "The bot already receives updates (webhook or polling). Send /start to the bot and the chat ID is saved automatically." }, 400);
+	}
+	try {
+		const chatId = await discoverTelegramChatId(settings.botToken);
+		if (!chatId) {
+			return c.json({ error: "No chat yet. Open the bot in Telegram and send /start, then try again." }, 404);
+		}
+		const saved = await setTelegramSettings(c.env.BUCKET, { chatId });
+		return c.json(toPublicTelegramSettings(saved));
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+app.post("/api/v1/settings/telegram/test", async (c) => {
+	const settings = await getTelegramSettings(c.env.BUCKET);
+	try {
+		await sendTelegramTest(settings);
+		return c.json({ ok: true });
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+app.post("/api/v1/settings/telegram/webhook", async (c) => {
+	try {
+		const saved = await registerTelegramWebhook(c.env.BUCKET);
+		return c.json(toPublicTelegramSettings(saved));
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+app.delete("/api/v1/settings/telegram/webhook", async (c) => {
+	try {
+		const saved = await unregisterTelegramWebhook(c.env.BUCKET);
+		return c.json(toPublicTelegramSettings(saved));
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+// Telegram calls this directly (no Access session). Authenticated by the
+// secret token Telegram echoes back from setWebhook; app.ts exempts the
+// path from the Access JWT check for that reason.
+app.post(TELEGRAM_WEBHOOK_PATH, async (c) => {
+	const settings = await getTelegramSettings(c.env.BUCKET);
+	const presented = c.req.header("x-telegram-bot-api-secret-token") || "";
+	if (!settings.webhookSecret || presented !== settings.webhookSecret) {
+		return c.text("Forbidden", 403);
+	}
+	let update: TelegramUpdate;
+	try {
+		update = (await c.req.json()) as TelegramUpdate;
+	} catch {
+		return c.text("Bad Request", 400);
+	}
+	await handleTelegramUpdate(c.env, update);
+	return c.json({ ok: true });
+});
+
+app.get("/api/v1/settings/blacklist", async (c) => {
+	return c.json({ entries: await getBlacklist(c.env.BUCKET) });
+});
+
+app.post("/api/v1/settings/blacklist", async (c) => {
+	const body = (await c.req.json()) as { address?: string };
+	try {
+		const entries = await addToBlacklist(c.env.BUCKET, { address: body.address || "" });
+		c.executionCtx.waitUntil(
+			moveSenderToSpam(c.env, body.address || "").catch((e) =>
+				console.error("Failed to move blacklisted sender to spam:", (e as Error).message),
+			),
+		);
+		return c.json({ entries });
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+app.delete("/api/v1/settings/blacklist", async (c) => {
+	const body = (await c.req.json()) as { address?: string };
+	if (!body.address) return c.json({ error: "address is required" }, 400);
+	const entries = await removeFromBlacklist(c.env.BUCKET, body.address);
+	return c.json({ entries });
+});
+
+app.get("/api/v1/unified/folders", async (c) => {
+	const mailboxes = await listMailboxes(c.env.BUCKET);
+	const totals: Record<string, number> = {};
+	await Promise.all(
+		mailboxes.map(async (m) => {
+			const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(m.id));
+			const folders = await stub.getFolders();
+			for (const folder of folders as { id: string; unreadCount: number }[]) {
+				totals[folder.id] = (totals[folder.id] || 0) + (folder.unreadCount || 0);
+			}
+		}),
+	);
+	return c.json({ unread: totals, mailboxCount: mailboxes.length });
+});
+
+app.get("/api/v1/unified/emails", async (c) => {
+	const folder = c.req.query("folder") || "inbox";
+	const page = intQuery(c, "page") || 1;
+	const limit = Math.min(intQuery(c, "limit") || 25, 100);
+	const mailboxes = await listMailboxes(c.env.BUCKET);
+	const perBox = Math.min(Math.max(limit * page, limit), 100);
+
+	const batches = await Promise.all(
+		mailboxes.map(async (m) => {
+			const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(m.id));
+			const emails = await (stub as any).getThreadedEmails({ folder, page: 1, limit: perBox });
+			const totalCount = await (stub as any).countThreadedEmails(folder);
+			return {
+				totalCount: Number(totalCount) || 0,
+				emails: (Array.isArray(emails) ? emails : []).map((email: Record<string, unknown>): Record<string, unknown> => ({
+					...email,
+					mailbox_id: m.id,
+				})),
+			};
+		}),
+	);
+
+	const totalCount = batches.reduce((sum, b) => sum + b.totalCount, 0);
+	const merged = batches
+		.flatMap((b) => b.emails)
+		.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+	const start = (page - 1) * limit;
+	return c.json({ emails: merged.slice(start, start + limit), totalCount });
 });
 
 // -- Mailboxes ------------------------------------------------------
@@ -255,6 +458,16 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
 });
 
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/spam", async (c: AppContext) => {
+	const mailboxId = c.req.param("mailboxId")!;
+	const emailId = c.req.param("id")!;
+	const result = await reportEmailAsSpam(c.env, mailboxId, emailId);
+	if ("error" in result) {
+		return c.json({ error: result.error }, result.status as 400 | 404);
+	}
+	return c.json(result);
+});
+
 // -- Threads --------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/threads/:threadId", async (c: AppContext) => {
@@ -356,12 +569,39 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 
+	const domains = configuredDomains(env);
+	const domainRecipients = allRecipients.filter((addr) => {
+		const domain = addr.split("@")[1];
+		return domain && domains.includes(domain);
+	});
+	const candidates = domainRecipients.length > 0 ? domainRecipients : allRecipients;
+
 	let mailboxId: string | undefined;
 	if (allowedAddresses.length > 0) {
-		mailboxId = allRecipients.find((addr) => allowedAddresses.includes(addr));
+		mailboxId = candidates.find((addr) => allowedAddresses.includes(addr));
 		if (!mailboxId) { console.log(`Ignoring email: no recipient matches EMAIL_ADDRESSES.`); return; }
-	} else { mailboxId = allRecipients[0]; }
-	if (!mailboxId) throw new Error("received email with no valid recipient address");
+	} else {
+		for (const addr of candidates) {
+			if (await env.BUCKET.head(`mailboxes/${addr}.json`)) {
+				mailboxId = addr;
+				break;
+			}
+		}
+		if (!mailboxId) {
+			for (const addr of candidates) {
+				const domain = addr.split("@")[1];
+				if (domain && (await isWildcardEnabled(env, domain))) {
+					mailboxId = addr;
+					await ensureMailbox(env, addr);
+					break;
+				}
+			}
+		}
+	}
+	if (!mailboxId) {
+		console.log("Ignoring email: no matching mailbox and catch-all is off for the recipient domain.");
+		return;
+	}
 
 	const messageId = crypto.randomUUID();
 	if (!(await env.BUCKET.head(`mailboxes/${mailboxId}.json`))) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
@@ -392,9 +632,13 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 
-	await stub.createEmail(Folders.INBOX, {
+	const senderAddress = (parsedEmail.from?.address || "").toLowerCase();
+	const blockedSender = senderAddress ? await isBlacklisted(env.BUCKET, senderAddress) : false;
+	const inboundFolder = blockedSender ? Folders.SPAM : Folders.INBOX;
+
+	await stub.createEmail(inboundFolder, {
 		id: messageId, subject: parsedEmail.subject || "",
-		sender: (parsedEmail.from?.address || "").toLowerCase(), recipient: allRecipients.join(", "),
+		sender: senderAddress, recipient: allRecipients.join(", "),
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
 		body: parsedEmail.html || parsedEmail.text || "",
@@ -402,11 +646,25 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 		thread_id: threadId, message_id: originalMessageId, raw_headers: JSON.stringify(parsedEmail.headers),
 	}, attachmentData);
 
+	if (blockedSender) {
+		console.log(`Blacklisted sender ${senderAddress} delivered to spam for ${mailboxId}`);
+		return;
+	}
+
 	const agentStub = env.EMAIL_AGENT.get(env.EMAIL_AGENT.idFromName(mailboxId));
 	ctx.waitUntil(agentStub.fetch(new Request("https://agents/onNewEmail", {
 		method: "POST", headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ mailboxId, emailId: messageId, sender: (parsedEmail.from?.address || "").toLowerCase(), subject: parsedEmail.subject || "", threadId }),
+		body: JSON.stringify({ mailboxId, emailId: messageId, sender: senderAddress, subject: parsedEmail.subject || "", threadId }),
 	})).catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
+
+	ctx.waitUntil(notifyNewEmail(env.BUCKET, {
+		mailboxId,
+		emailId: messageId,
+		sender: parsedEmail.from?.address || "",
+		subject: parsedEmail.subject || "",
+		body: parsedEmail.text || parsedEmail.html || "",
+		attachmentCount: attachmentData.length,
+	}).catch((e) => console.error("Telegram notify failed:", (e as Error).message)));
 }
 
 export { app, receiveEmail };

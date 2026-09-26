@@ -7,6 +7,8 @@ import { Hono } from "hono";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
+import { TELEGRAM_WEBHOOK_PATH } from "./lib/telegram";
+import { pollTelegramUpdates } from "./lib/telegram-webhook";
 import { EmailMCP } from "./mcp";
 import type { Env } from "./types";
 
@@ -46,6 +48,13 @@ const app = new Hono<{ Bindings: Env }>();
 app.use("*", async (c, next) => {
 	// Skip validation in development
 	if (import.meta.env.DEV) {
+		return next();
+	}
+
+	// Telegram's servers cannot hold an Access session. The webhook route
+	// authenticates with the per-bot secret token instead (see workers/index.ts),
+	// and the Cloudflare Access application must also bypass this path.
+	if (c.req.method === "POST" && c.req.path === TELEGRAM_WEBHOOK_PATH) {
 		return next();
 	}
 
@@ -110,6 +119,15 @@ app.all("*", (c) => {
 // Export the Hono app as the default export with an email handler
 export default {
 	fetch: app.fetch,
+	// Cron trigger (every minute): pull Telegram button taps and replies when
+	// no webhook is registered. Runs inside the Worker, so Access never sees it.
+	async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+		ctx.waitUntil(
+			pollTelegramUpdates(env)
+				.then((n) => { if (n > 0) console.log(`Telegram poll handled ${n} update(s)`); })
+				.catch((e) => console.error("Telegram poll failed:", (e as Error).message)),
+		);
+	},
 	async email(
 		event: { raw: ReadableStream; rawSize: number },
 		env: Env,

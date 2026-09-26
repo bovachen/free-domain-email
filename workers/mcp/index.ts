@@ -19,6 +19,7 @@ import {
 	toolSendEmail,
 	toolMarkEmailRead,
 	toolMoveEmail,
+	toolReportSpam,
 } from "../lib/tools";
 import { Folders, FOLDER_TOOL_DESCRIPTION, MOVE_FOLDER_TOOL_DESCRIPTION } from "../../shared/folders";
 import type { Env } from "../types";
@@ -403,7 +404,7 @@ export class EmailMCP extends McpAgent<Env> {
 		// ── move_email ─────────────────────────────────────────────
 		this.server.tool(
 			"move_email",
-			"Move an email to a different folder (inbox, sent, draft, archive, trash).",
+			"Move an email to a different folder (inbox, sent, draft, archive, spam, trash).",
 			{
 				mailboxId: z.string().describe("The mailbox email address"),
 				emailId: z.string().describe("The email ID"),
@@ -426,6 +427,22 @@ export class EmailMCP extends McpAgent<Env> {
 						isError: true,
 					};
 				}
+				return mcpText(result);
+			},
+		);
+
+		this.server.tool(
+			"report_spam",
+			"Report an email as spam, move mail from that sender to Spam, and blacklist the sender.",
+			{
+				mailboxId: z.string().describe("The mailbox email address"),
+				emailId: z.string().describe("The email ID to report as spam"),
+			},
+			async ({ mailboxId, emailId }) => {
+				const denied = await verifyMailbox(mailboxId);
+				if (denied) return denied;
+				const result = await toolReportSpam(env, mailboxId, emailId);
+				if ("error" in result) return mcpError(result.error);
 				return mcpText(result);
 			},
 		);

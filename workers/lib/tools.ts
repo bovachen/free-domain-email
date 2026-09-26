@@ -29,6 +29,7 @@ import {
 import { verifyDraft } from "./ai";
 import { sendEmail } from "../email-sender";
 import { Folders } from "../../shared/folders";
+import { reportEmailAsSpam } from "./blacklist";
 import type { Env } from "../types";
 
 // ── Type casts for DO methods not on the base stub type ────────────
@@ -352,6 +353,18 @@ export async function toolMoveEmail(
 		return { status: "moved", emailId, folder: folderId };
 	}
 	return { error: "Failed to move email" };
+}
+
+// ── report_spam ────────────────────────────────────────────────────
+
+export async function toolReportSpam(
+	env: Env,
+	mailboxId: string,
+	emailId: string,
+) {
+	const result = await reportEmailAsSpam(env, mailboxId, emailId);
+	if ("error" in result) return { error: result.error };
+	return result;
 }
 
 // ── discard_draft ──────────────────────────────────────────────────

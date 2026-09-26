@@ -4,7 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import api from "~/services/api";
-import type { Mailbox } from "~/types";
+import type { BlacklistEntry, Mailbox } from "~/types";
 import { queryKeys } from "./keys";
 
 export function useMailboxes() {
@@ -47,6 +47,82 @@ export function useUpdateMailbox() {
 			qc.invalidateQueries({ queryKey: queryKeys.mailboxes.detail(mailboxId) });
 			qc.invalidateQueries({ queryKey: queryKeys.mailboxes.all });
 		},
+	});
+}
+
+export function useWildcardSettings() {
+	return useQuery<Record<string, boolean>>({
+		queryKey: queryKeys.wildcard,
+		queryFn: () => api.getWildcardSettings(),
+	});
+}
+
+export function useUpdateWildcardSettings() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (patch: Record<string, boolean>) =>
+			api.updateWildcardSettings(patch),
+		onSuccess: (data) => {
+			qc.setQueryData(queryKeys.wildcard, data);
+			qc.invalidateQueries({ queryKey: queryKeys.config });
+		},
+	});
+}
+
+export function useTelegramSettings() {
+	return useQuery({
+		queryKey: queryKeys.telegram,
+		queryFn: () => api.getTelegramSettings(),
+	});
+}
+
+export function useUpdateTelegramSettings() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (
+			patch: Parameters<typeof api.updateTelegramSettings>[0],
+		) => api.updateTelegramSettings(patch),
+		onSuccess: (data) => {
+			qc.setQueryData(queryKeys.telegram, data);
+		},
+	});
+}
+
+export function useBlacklist() {
+	return useQuery<{ entries: BlacklistEntry[] }>({
+		queryKey: queryKeys.blacklist,
+		queryFn: () => api.getBlacklist(),
+	});
+}
+
+export function useAddToBlacklist() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (address: string) => api.addToBlacklist(address),
+		onSuccess: (data) => {
+			qc.setQueryData(queryKeys.blacklist, data);
+			qc.invalidateQueries({ queryKey: ["emails"] });
+			qc.invalidateQueries({ queryKey: ["unified-emails"] });
+			qc.invalidateQueries({ queryKey: queryKeys.unified.folders });
+		},
+	});
+}
+
+export function useRemoveFromBlacklist() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (address: string) => api.removeFromBlacklist(address),
+		onSuccess: (data) => {
+			qc.setQueryData(queryKeys.blacklist, data);
+		},
+	});
+}
+
+export function useUnifiedFolders() {
+	return useQuery({
+		queryKey: queryKeys.unified.folders,
+		queryFn: () => api.listUnifiedFolders(),
+		refetchInterval: 30_000,
 	});
 }
 

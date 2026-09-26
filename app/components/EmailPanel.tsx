@@ -13,7 +13,7 @@ import SingleMessageView from "~/components/email-panel/SingleMessageView";
 import ThreadMessage from "~/components/email-panel/ThreadMessage";
 import { splitEmailList, toEmailListValue } from "~/lib/utils";
 import api from "~/services/api";
-import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
+import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useReportSpam, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -30,7 +30,11 @@ function EmailPanelSkeleton() {
 }
 
 export default function EmailPanel({ emailId }: { emailId: string }) {
-	const { mailboxId, folder } = useParams<{ mailboxId: string; folder: string }>();
+	const { mailboxId: mailboxIdParam, folder } = useParams<{ mailboxId: string; folder: string }>();
+	const selectedMailboxId = useUIStore((s) => s.selectedMailboxId);
+	const mailboxId = mailboxIdParam
+		? decodeURIComponent(mailboxIdParam)
+		: selectedMailboxId || undefined;
 	const { data: email } = useEmail(mailboxId, emailId) as { data?: Email };
 	const { data: threadRepliesRaw } = useThreadReplies(mailboxId, email?.thread_id) as {
 		data?: Email[];
@@ -38,6 +42,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	const updateEmail = useUpdateEmail();
 	const deleteEmailMut = useDeleteEmail();
 	const moveEmailMut = useMoveEmail();
+	const reportSpamMut = useReportSpam();
 	const sendEmailMut = useSendEmail();
 	const replyMut = useReplyToEmail();
 	const { data: folders = [] } = useFolders(mailboxId) as { data?: Folder[] };
@@ -51,6 +56,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
 	const [previewImage, setPreviewImage] = useState<{ url: string; filename: string } | null>(null);
 	const isDraftFolder = folder === Folders.DRAFT;
+	const isSpamFolder = folder === Folders.SPAM || email?.folder_id === Folders.SPAM;
 
 	const threadReplies = useMemo(() => {
 		if (!threadRepliesRaw || !email) return [];
@@ -90,6 +96,43 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
 	const handleMove = (folderId: string) => { if (mailboxId) { moveEmailMut.mutate({ mailboxId, id: email.id, folderId }); closePanel(); } };
 	const handleDelete = () => { if (mailboxId) { if (!window.confirm("Are you sure you want to delete this email?")) return; deleteEmailMut.mutate({ mailboxId, id: email.id }); closePanel(); } };
+
+	const spamTarget = lastReceivedMessage?.sender && lastReceivedMessage.sender !== currentMailbox?.email
+		? lastReceivedMessage
+		: email;
+	const canReportSpam = !isDraftFolder && email.folder_id !== Folders.SENT && email.folder_id !== Folders.DRAFT;
+
+	const handleReportSpam = () => {
+		if (!mailboxId) return;
+		const senderLabel = spamTarget.sender || "this sender";
+		if (!window.confirm(`Report as spam and block ${senderLabel}? Future mail from this sender will go to Spam.`)) return;
+		reportSpamMut.mutate(
+			{ mailboxId, id: spamTarget.id },
+			{
+				onSuccess: (result) => {
+					toastManager.add({
+						title: result.sender
+							? `Blocked ${result.sender} and moved to Spam`
+							: "Moved to Spam",
+					});
+					closePanel();
+				},
+				onError: (err) => {
+					toastManager.add({
+						title: err instanceof Error ? err.message : "Failed to report spam",
+						variant: "error",
+					});
+				},
+			},
+		);
+	};
+
+	const handleNotSpam = () => {
+		if (!mailboxId) return;
+		moveEmailMut.mutate({ mailboxId, id: email.id, folderId: Folders.INBOX });
+		toastManager.add({ title: "Moved to Inbox. Unblock the sender from Blacklist if you want future mail." });
+		closePanel();
+	};
 
 	const handleEditDraft = (draftMsg?: Email) => {
 		const target = draftMsg || email;
@@ -173,6 +216,11 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				onMove={handleMove}
 				onViewSource={() => setSourceViewEmail(email)}
 				onDelete={handleDelete}
+				onReportSpam={handleReportSpam}
+				onNotSpam={handleNotSpam}
+				isSpamFolder={isSpamFolder}
+				canReportSpam={canReportSpam}
+				isReportingSpam={reportSpamMut.isPending}
 			/>
 
 			<EmailPanelHeader

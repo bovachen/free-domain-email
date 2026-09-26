@@ -11,7 +11,8 @@ build/
 !.dev.vars.example
 .vite/
 dist/
-snapshot-*.txt
+*snapshot-*.txt
+wrangler.local.jsonc
 .agents/
 opencode.jsonc
 skills-lock.json

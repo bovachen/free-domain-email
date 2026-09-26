@@ -649,6 +649,34 @@ export class MailboxDO extends DurableObject<Env> {
 		return true;
 	}
 
+	/**
+	 * Move every message from a sender into a folder, skipping sent/draft/trash
+	 * so outbound copies stay put. Used by "report spam and block sender".
+	 */
+	async moveEmailsFromSender(sender: string, folderId: string) {
+		const folder = this.db
+			.select({ id: schema.folders.id })
+			.from(schema.folders)
+			.where(eq(schema.folders.id, folderId))
+			.get();
+
+		if (!folder) return 0;
+
+		const normalized = sender.trim().toLowerCase();
+		if (!normalized) return 0;
+
+		const cursor = this.ctx.storage.sql.exec(
+			`UPDATE emails
+			 SET folder_id = ?1
+			 WHERE LOWER(sender) = ?2
+			   AND folder_id NOT IN ('sent', 'draft', 'trash')`,
+			folderId,
+			normalized,
+		);
+		cursor.toArray();
+		return cursor.rowsWritten ?? 0;
+	}
+
 	// ── Search (raw SQL — dynamic condition builder) ───────────────
 
 	/**

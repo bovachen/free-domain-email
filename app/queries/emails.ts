@@ -24,15 +24,18 @@ export function useEmails(
 	const queryParams = params.folder
 		? { ...params, threaded: "true" }
 		: params;
+	const unified = !mailboxId;
 
 	return useQuery<EmailListResponse>({
-		queryKey: mailboxId
-			? queryKeys.emails.list(mailboxId, queryParams)
-			: ["emails", "_disabled"],
+		queryKey: unified
+			? queryKeys.unified.emails(queryParams)
+			: queryKeys.emails.list(mailboxId!, queryParams),
 		queryFn: async () => {
-			const data = await api.listEmails(mailboxId!, queryParams) as
-				| EmailListResponse
-				| Email[];
+			const data = unified
+				? await api.listUnifiedEmails(queryParams)
+				: await api.listEmails(mailboxId!, queryParams) as
+					| EmailListResponse
+					| Email[];
 			if (data && typeof data === "object" && "emails" in data) {
 				return {
 					emails: (data as EmailListResponse).emails ?? [],
@@ -42,7 +45,7 @@ export function useEmails(
 			const arr = Array.isArray(data) ? data : [];
 			return { emails: arr, totalCount: arr.length };
 		},
-		enabled: !!mailboxId && (options?.enabled ?? true),
+		enabled: options?.enabled ?? true,
 		refetchInterval: options?.refetchInterval,
 	});
 }
@@ -101,6 +104,8 @@ function useInvalidateEmailData() {
 		qc.invalidateQueries({
 			queryKey: queryKeys.folders.list(mailboxId),
 		});
+		qc.invalidateQueries({ queryKey: queryKeys.unified.folders });
+		qc.invalidateQueries({ queryKey: ["unified-emails"] });
 	};
 }
 
@@ -226,6 +231,22 @@ export function useMoveEmail() {
 		}: { mailboxId: string; id: string; folderId: string }) =>
 			api.moveEmail(mailboxId, id, folderId),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
+	});
+}
+
+export function useReportSpam() {
+	const qc = useQueryClient();
+	const invalidate = useInvalidateEmailData();
+	return useMutation({
+		mutationFn: ({
+			mailboxId,
+			id,
+		}: { mailboxId: string; id: string }) =>
+			api.reportSpam(mailboxId, id),
+		onSuccess: (_data, { mailboxId }) => {
+			invalidate(mailboxId);
+			qc.invalidateQueries({ queryKey: queryKeys.blacklist });
+		},
 	});
 }
 

@@ -12,6 +12,7 @@ import {
 	CodeIcon,
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
+	FlagIcon,
 	FolderSimpleIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
@@ -39,6 +40,11 @@ interface EmailPanelToolbarProps {
 	onMove: (folderId: string) => void;
 	onViewSource: () => void;
 	onDelete: () => void;
+	onReportSpam?: () => void;
+	onNotSpam?: () => void;
+	isSpamFolder?: boolean;
+	canReportSpam?: boolean;
+	isReportingSpam?: boolean;
 }
 
 export default function EmailPanelToolbar({
@@ -58,6 +64,11 @@ export default function EmailPanelToolbar({
 	onMove,
 	onViewSource,
 	onDelete,
+	onReportSpam,
+	onNotSpam,
+	isSpamFolder = false,
+	canReportSpam = false,
+	isReportingSpam = false,
 }: EmailPanelToolbarProps) {
 	return (
 		<div className="flex items-center gap-1 px-3 py-2 border-b border-kumo-line shrink-0 md:px-4">
@@ -159,6 +170,30 @@ export default function EmailPanelToolbar({
 			<MoveToFolderMenu folders={moveToFolders} onMove={onMove} />
 
 			<div className="ml-auto flex items-center gap-0.5">
+				{isSpamFolder && onNotSpam ? (
+					<Tooltip content="Not spam — move to inbox" side="bottom" asChild>
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={onNotSpam}
+							aria-label="Not spam"
+						>
+							Not spam
+						</Button>
+					</Tooltip>
+				) : canReportSpam && onReportSpam ? (
+					<Tooltip content="Report spam and block sender" side="bottom" asChild>
+						<Button
+							variant="ghost"
+							shape="square"
+							size="sm"
+							icon={<FlagIcon size={18} className="text-kumo-destructive" />}
+							onClick={onReportSpam}
+							loading={isReportingSpam}
+							aria-label="Report spam and block sender"
+						/>
+					</Tooltip>
+				) : null}
 				<Tooltip content="View source" side="bottom" asChild>
 					<Button
 						variant="ghost"

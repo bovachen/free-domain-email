@@ -7,6 +7,8 @@ Agentic Inbox lets you send, receive, and manage emails through a modern web int
 
 An **AI-powered Email Agent** can read your inbox, search conversations, and draft replies -- built with the [Cloudflare Agents SDK](https://developers.cloudflare.com/agents/) and [Workers AI](https://developers.cloudflare.com/workers-ai/).
 
+> **About this fork:** this is a fork of [cloudflare/agentic-inbox](https://github.com/cloudflare/agentic-inbox). It adds a unified inbox across mailboxes, multiple domains with catch-all addresses, a Spam folder with a sender blacklist, and Telegram alerts you can act on without opening the app. See [Added in this fork](#added-in-this-fork).
+
 ![Agentic Inbox screenshot](./demo_app.png)
 
 
@@ -19,9 +21,9 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 
 ### To set up
 
-1. Deploy to Cloudflare. The deploy flow will automatically provision R2, Durable Objects, and Workers AI. You'll be prompted for **DOMAINS**, which is the domain (yourdomain.com) you want to receive emails for (email@yourdomain.com).
+1. Deploy to Cloudflare. The deploy flow will automatically provision R2, Durable Objects, and Workers AI. You'll be prompted for **DOMAINS**, which is the domain (yourdomain.com) you want to receive emails for (email@yourdomain.com). Separate several domains with commas.
 
-     [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/cloudflare/agentic-inbox)
+     [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/bovachen/agentic-inbox)
 
 2. **Configure Cloudflare Access** -- Enable [one-click Cloudflare Access](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/) on your Worker under Settings > Domains & Routes. The modal will show your `POLICY_AUD` and `TEAM_DOMAIN` values. `TEAM_DOMAIN` can be either your Access team URL or the full `.../cdn-cgi/access/certs` URL. **You must set these as secrets for your Worker.**
 3. **Set up Email Routing** -- In the Cloudflare dashboard, go to your domain > Email Routing and create a catch-all rule that forwards to this Worker
@@ -35,13 +37,31 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 2. If you see `Cloudflare Access must be configured in production`, this application is intentionally enforcing Cloudflare Access so your inbox is not exposed to anyone on the internet.
    * Resolution: enable Access using [one-click Cloudflare Access for Workers](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/), then set the `POLICY_AUD` and `TEAM_DOMAIN` Worker secrets from the modal values.
 
+### Telegram alerts (optional)
+
+New mail can be pushed to a Telegram chat with inline buttons. Configure it from the sidebar (**Telegram alerts**):
+
+1. Create a bot with @BotFather and paste the token; open the bot and send `/start` — the chat ID binds automatically. Links in alerts point back to the address you opened the inbox from; set **Inbox URL** to use a different one.
+2. That's it. By default a cron trigger (`* * * * *` in `wrangler.jsonc`) long-polls Telegram's `getUpdates` from inside the Worker, so button taps and replies need no inbound route and no Access changes. A tap usually lands within a few seconds, worst case about a minute.
+
+Optional instant delivery: click **Connect webhook** to register `https://<your-inbox>/api/telegram/webhook` with Telegram, and in Cloudflare Zero Trust add a second Access application for that path with a **Bypass** policy for *Everyone*. Telegram's servers cannot log in, so the Worker authenticates that path with the secret token Telegram echoes back (`X-Telegram-Bot-Api-Secret-Token`). Polling pauses automatically while a webhook is registered.
+
+Each alert offers buttons that act in place — mark read/unread, star, delete (to Trash), mark as spam, block the sender — each with its undo; replying to the alert message sends an email reply from that mailbox, and `/block <address>` / `/unblock <address>` manage the blacklist. Without the webhook, the alert falls back to a link that opens the web UI.
+
 ## Features
 
 - **Full email client** — Send and receive emails via Cloudflare Email Routing with a rich text composer, reply/forward threading, folder organization, search, and attachments
 - **Per-mailbox isolation** — Each mailbox runs in its own Durable Object with SQLite storage and R2 for attachments
-- **Built-in AI agent** — Side panel with 9 email tools for reading, searching, drafting, and sending
+- **Built-in AI agent** — Side panel with 10 email tools for reading, searching, drafting, sending, and reporting spam
 - **Auto-draft on new email** — Agent automatically reads inbound emails and generates draft replies, always requiring explicit confirmation before sending
 - **Configurable and persistent** — Custom system prompts per mailbox, persistent chat history, streaming markdown responses, and tool call visibility
+
+### Added in this fork
+
+- **Unified inbox** — "All Inboxes" and the other system folders merge every mailbox. The sidebar groups accounts by domain, and the composer shows a **From** picker when you have more than one mailbox
+- **Multiple domains and catch-all addresses** — `DOMAINS` takes a comma-separated list. Catch-all is on per domain by default: mail to any address at that domain creates its mailbox automatically. Turn it off per domain under **Catch-all addresses** in the sidebar
+- **Spam folder and sender blacklist** — Report spam from the email list, the reader, the agent, or MCP (`report_spam`). The email and the sender's other mail move to Spam, and later mail from that sender goes straight to Spam without triggering auto-drafts or alerts. Manage blocked senders under **Blacklist** in the sidebar
+- **Telegram alerts** — New mail is pushed to Telegram with buttons to mark read, star, delete, flag spam, or block the sender, and replying to an alert sends an email reply. See [Telegram alerts](#telegram-alerts-optional)
 
 ## Stack
 
@@ -61,6 +81,8 @@ npm run dev
 
 1. Set your domain in `wrangler.jsonc`
 2. Create an R2 bucket named `agentic-inbox`: `wrangler r2 bucket create agentic-inbox`
+
+To keep deployment-specific values such as `account_id`, custom domain `routes`, and your real `DOMAINS` out of git, copy `wrangler.jsonc` to `wrangler.local.jsonc` and edit the copy. It is gitignored, and `npm run dev` / `npm run deploy` use it in place of `wrangler.jsonc` whenever it exists.
 
 ### Deploy
 
@@ -88,7 +110,7 @@ Any user who passes the shared Cloudflare Access policy can access all mailboxes
 └──────┬───────┘     │  /agents/* ──────┼────>┌─────────────────┐
        │             │                  │     │  EmailAgent DO  │
        │ WebSocket   │                  │     │  (AIChatAgent)  │
-       └─────────────┤                  │     │  9 email tools  │
+       └─────────────┤                  │     │ 10 email tools  │
                      │                  │────>│  Workers AI     │
                      └──────────────────┘     └─────────────────┘
 ```

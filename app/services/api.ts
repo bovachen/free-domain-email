@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import type { Email, Folder, Mailbox } from "~/types";
+import type { BlacklistEntry, Email, Folder, Mailbox } from "~/types";
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -92,12 +92,57 @@ interface EmailListResponse {
 	totalCount: number;
 }
 
+export interface TelegramSettings {
+	enabled: boolean;
+	botTokenConfigured: boolean;
+	chatId: string;
+	inboxBaseUrl: string;
+	webhookConfigured: boolean;
+	webhookUrl: string;
+	polling: boolean;
+	mode: "webhook" | "polling" | "link";
+	lastPollAt?: string;
+	lastPollError?: string;
+}
+
 // ---------- API client ----------
 
 const api = {
 	// Config
 	getConfig: () =>
-		get<{ domains: string[]; emailAddresses: string[] }>("/api/v1/config"),
+		get<{ domains: string[]; emailAddresses: string[]; wildcard: Record<string, boolean> }>("/api/v1/config"),
+	getWildcardSettings: () => get<Record<string, boolean>>("/api/v1/settings/wildcard"),
+	updateWildcardSettings: (patch: Record<string, boolean>) =>
+		put<Record<string, boolean>>("/api/v1/settings/wildcard", patch),
+	getTelegramSettings: () => get<TelegramSettings>("/api/v1/settings/telegram"),
+	updateTelegramSettings: (patch: {
+		enabled?: boolean;
+		botToken?: string;
+		chatId?: string;
+		inboxBaseUrl?: string;
+		polling?: boolean;
+	}) => put<TelegramSettings>("/api/v1/settings/telegram", patch),
+	discoverTelegramChat: () => post<TelegramSettings>("/api/v1/settings/telegram/discover"),
+	testTelegram: () => post<{ ok: boolean }>("/api/v1/settings/telegram/test"),
+	registerTelegramWebhook: () => post<TelegramSettings>("/api/v1/settings/telegram/webhook"),
+	unregisterTelegramWebhook: () =>
+		request<TelegramSettings>("/api/v1/settings/telegram/webhook", { method: "DELETE" }),
+	getBlacklist: () => get<{ entries: BlacklistEntry[] }>("/api/v1/settings/blacklist"),
+	addToBlacklist: (address: string) =>
+		post<{ entries: BlacklistEntry[] }>("/api/v1/settings/blacklist", { address }),
+	removeFromBlacklist: (address: string) =>
+		request<{ entries: BlacklistEntry[] }>("/api/v1/settings/blacklist", {
+			method: "DELETE",
+			body: JSON.stringify({ address }),
+		}),
+	reportSpam: (mailboxId: string, emailId: string) =>
+		post<{ status: string; sender: string | null; blocked: boolean }>(
+			`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/spam`,
+		),
+	listUnifiedEmails: (params: Record<string, string>, opts?: { signal?: AbortSignal }) =>
+		get<EmailListResponse>("/api/v1/unified/emails", { params, signal: opts?.signal }),
+	listUnifiedFolders: () =>
+		get<{ unread: Record<string, number>; mailboxCount: number }>("/api/v1/unified/folders"),
 
 	// Mailboxes
 	listMailboxes: () => get<Mailbox[]>("/api/v1/mailboxes"),

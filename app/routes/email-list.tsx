@@ -2,7 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
-import { Button, Pagination, Tooltip } from "@cloudflare/kumo";
+import { Button, Pagination, Tooltip, useKumoToastManager } from "@cloudflare/kumo";
 import {
 	ArchiveIcon,
 	ArrowBendUpLeftIcon,
@@ -10,15 +10,17 @@ import {
 	EnvelopeOpenIcon,
 	EnvelopeSimpleIcon,
 	FileIcon,
+	FlagIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
 	StarIcon,
 	TrashIcon,
 	TrayIcon,
+	WarningIcon,
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { Folders } from "shared/folders";
 import { formatListDate } from "shared/dates";
 import MailboxSplitView from "~/components/MailboxSplitView";
@@ -27,6 +29,7 @@ import {
 	useDeleteEmail,
 	useEmails,
 	useMarkThreadRead,
+	useReportSpam,
 	useUpdateEmail,
 } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
@@ -77,6 +80,12 @@ const FOLDER_EMPTY_STATES: Record<
 		title: "Trash is empty",
 		description:
 			"Deleted emails will appear here. You can restore them or permanently delete them.",
+	},
+	[Folders.SPAM]: {
+		icon: <WarningIcon size={48} weight="thin" className="text-kumo-subtle" />,
+		title: "No spam",
+		description:
+			"Reported junk and mail from blocked senders will show up here.",
 	},
 };
 
@@ -141,10 +150,15 @@ function FolderEmptyState({
 }
 
 export default function EmailListRoute() {
-	const { mailboxId, folder } = useParams<{
+	const { mailboxId: mailboxIdParam, folder } = useParams<{
 		mailboxId: string;
 		folder: string;
 	}>();
+	const mailboxId = mailboxIdParam ? decodeURIComponent(mailboxIdParam) : undefined;
+	const unified = !mailboxId;
+	const [searchParams] = useSearchParams();
+	const deepEmailId = searchParams.get("email");
+	const { setComposeMailboxId } = useUIStore();
 	const {
 		selectedEmailId,
 		isComposing,
@@ -153,11 +167,14 @@ export default function EmailListRoute() {
 		startCompose,
 	} = useUIStore();
 	const [page, setPage] = useState(1);
+	const appliedDeepLink = useRef<string | null>(null);
 
 	const queryClient = useQueryClient();
 	const updateEmail = useUpdateEmail();
 	const markThreadRead = useMarkThreadRead();
 	const deleteEmail = useDeleteEmail();
+	const reportSpam = useReportSpam();
+	const toastManager = useKumoToastManager();
 
 	const params = useMemo(
 		() => ({
@@ -194,34 +211,82 @@ export default function EmailListRoute() {
 		prevFolderRef.current = `${mailboxId}/${folder}`;
 
 		if (folderChanged) {
-			closePanel();
+			if (!deepEmailId) closePanel();
 			setPage(1);
 		}
-	}, [mailboxId, folder, closePanel]);
+	}, [mailboxId, folder, closePanel, deepEmailId]);
+
+	useEffect(() => {
+		if (!deepEmailId || !mailboxId) return;
+		const key = `${mailboxId}:${deepEmailId}`;
+		if (appliedDeepLink.current === key) return;
+		appliedDeepLink.current = key;
+		selectEmail(deepEmailId, mailboxId);
+		setComposeMailboxId(mailboxId);
+	}, [deepEmailId, mailboxId, selectEmail, setComposeMailboxId]);
+
+	const mailboxOf = (email: Email) => email.mailbox_id || mailboxId;
 
 	const toggleStar = (e: React.MouseEvent, email: Email) => {
 		e.preventDefault();
 		e.stopPropagation();
-		if (mailboxId)
+		const box = mailboxOf(email);
+		if (box)
 			updateEmail.mutate({
-				mailboxId,
+				mailboxId: box,
 				id: email.id,
 				data: { starred: !email.starred },
 			});
 	};
 
-	const handleDelete = (e: React.MouseEvent, emailId: string) => {
+	const handleDelete = (e: React.MouseEvent, emailId: string, boxId?: string) => {
 		e.preventDefault();
 		e.stopPropagation();
-		if (mailboxId) {
+		const box = boxId || mailboxId;
+		if (box) {
 			const confirmed = window.confirm("Are you sure you want to delete this email?");
 			if (!confirmed) return;
-			deleteEmail.mutate({ mailboxId, id: emailId });
+			deleteEmail.mutate({ mailboxId: box, id: emailId });
 			if (selectedEmailId === emailId) closePanel();
 		}
 	};
 
+	const handleReportSpam = (e: React.MouseEvent, email: Email) => {
+		e.preventDefault();
+		e.stopPropagation();
+		const box = mailboxOf(email);
+		if (!box) return;
+		const senderLabel = email.sender || "this sender";
+		if (!window.confirm(`Report as spam and block ${senderLabel}? Future mail from this sender will go to Spam.`)) {
+			return;
+		}
+		reportSpam.mutate(
+			{ mailboxId: box, id: email.id },
+			{
+				onSuccess: (result) => {
+					toastManager.add({
+						title: result.sender
+							? `Blocked ${result.sender} and moved to Spam`
+							: "Moved to Spam",
+					});
+					if (selectedEmailId === email.id) closePanel();
+				},
+				onError: (err) => {
+					toastManager.add({
+						title: err instanceof Error ? err.message : "Failed to report spam",
+						variant: "error",
+					});
+				},
+			},
+		);
+	};
+
 	const handleRefresh = () => {
+		if (unified) {
+			queryClient.invalidateQueries({ queryKey: queryKeys.unified.emails(params) });
+			queryClient.invalidateQueries({ queryKey: queryKeys.unified.folders });
+			return;
+		}
 		if (mailboxId) {
 			queryClient.invalidateQueries({ queryKey: ["emails", mailboxId] });
 			queryClient.invalidateQueries({
@@ -239,16 +304,18 @@ export default function EmailListRoute() {
 	};
 
 	const handleRowClick = (email: Email) => {
-		selectEmail(email.id);
-		if (mailboxId && hasUnread(email)) {
+		const box = mailboxOf(email);
+		selectEmail(email.id, box);
+		if (box) setComposeMailboxId(box);
+		if (box && hasUnread(email)) {
 			if (email.thread_id && email.thread_count && email.thread_count > 1) {
 				markThreadRead.mutate({
-					mailboxId,
+					mailboxId: box,
 					threadId: email.thread_id,
 				});
 			} else {
 				updateEmail.mutate({
-					mailboxId,
+					mailboxId: box,
 					id: email.id,
 					data: { read: true },
 				});
@@ -318,7 +385,7 @@ export default function EmailListRoute() {
 								const snippet = getSnippetText(email.snippet);
 								return (
 									<div
-										key={email.id}
+										key={`${email.mailbox_id || mailboxId || ""}:${email.id}`}
 										role="button"
 										tabIndex={0}
 										onClick={() => handleRowClick(email)}
@@ -388,6 +455,11 @@ export default function EmailListRoute() {
 													{formatListDate(email.date)}
 												</span>
 											</div>
+											{unified && email.mailbox_id && (
+												<div className="text-xs text-kumo-subtle truncate mt-0.5">
+													{email.mailbox_id}
+												</div>
+											)}
 											<div className="truncate text-sm mt-0.5">
 												<span
 													className={hasUnread(email) ? "font-medium text-kumo-default" : "text-kumo-subtle"}
@@ -422,13 +494,25 @@ export default function EmailListRoute() {
 													aria-label={email.read ? "Mark unread" : "Mark read"}
 												/>
 											</Tooltip>
+											{folder !== Folders.SPAM && folder !== Folders.SENT && folder !== Folders.DRAFT && (
+												<Tooltip content="Report spam and block sender" asChild>
+													<Button
+														variant="ghost"
+														shape="square"
+														size="sm"
+														icon={<FlagIcon size={14} className="text-kumo-destructive" />}
+														onClick={(e) => handleReportSpam(e, email)}
+														aria-label="Report spam and block sender"
+													/>
+												</Tooltip>
+											)}
 											<Tooltip content="Delete" asChild>
 												<Button
 													variant="ghost"
 													shape="square"
 													size="sm"
 													icon={<TrashIcon size={14} />}
-													onClick={(e) => handleDelete(e, email.id)}
+													onClick={(e) => handleDelete(e, email.id, mailboxOf(email))}
 													aria-label="Delete"
 												/>
 											</Tooltip>

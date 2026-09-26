@@ -63,14 +63,14 @@ app.use("*", async (c, next) => {
 	// Fail closed in production if Access is not configured.
 	if (!POLICY_AUD || !TEAM_DOMAIN) {
 		return c.text(
-			"Cloudflare Access must be configured in production. Set POLICY_AUD and TEAM_DOMAIN.",
+			"生产环境必须配置 Cloudflare Access：请设置 POLICY_AUD 和 TEAM_DOMAIN。",
 			500,
 		);
 	}
 
 	const token = c.req.header("cf-access-jwt-assertion");
 	if (!token) {
-		return c.text("Missing required CF Access JWT", 403);
+		return c.text("缺少 Cloudflare Access 登录凭证（CF Access JWT）", 403);
 	}
 
 	try {
@@ -81,7 +81,7 @@ app.use("*", async (c, next) => {
 			audience: POLICY_AUD,
 		});
 	} catch {
-		return c.text("Invalid or expired Access token", 403);
+		return c.text("Access 令牌无效或已过期", 403);
 	}
 
 	// Authorization model note: once a teammate passes the shared Cloudflare
@@ -106,7 +106,7 @@ app.route("/", apiApp);
 app.all("/agents/*", async (c) => {
 	const response = await routeAgentRequest(c.req.raw, c.env);
 	if (response) return response;
-	return c.text("Agent not found", 404);
+	return c.text("未找到 AI 助手", 404);
 });
 
 // React Router catch-all: serves the SPA for all non-API routes

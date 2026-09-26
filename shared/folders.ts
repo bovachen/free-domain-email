@@ -39,12 +39,12 @@ export const SYSTEM_FOLDER_IDS: readonly FolderId[] = [
  * Used in the sidebar, search result badges, and tool descriptions.
  */
 export const FOLDER_DISPLAY_NAMES: Record<string, string> = {
-	[Folders.INBOX]: "Inbox",
-	[Folders.SENT]: "Sent",
-	[Folders.DRAFT]: "Drafts",
-	[Folders.ARCHIVE]: "Archive",
-	[Folders.TRASH]: "Trash",
-	[Folders.SPAM]: "Spam",
+	[Folders.INBOX]: "收件箱",
+	[Folders.SENT]: "已发送",
+	[Folders.DRAFT]: "草稿",
+	[Folders.ARCHIVE]: "归档",
+	[Folders.TRASH]: "废纸篓",
+	[Folders.SPAM]: "垃圾邮件",
 };
 
 /** Formatted string for tool parameter descriptions (agent + MCP). */
@@ -56,9 +56,10 @@ export const MOVE_FOLDER_TOOL_DESCRIPTION =
 	"Target folder: inbox, sent, draft, archive, spam, trash";
 
 /**
- * Look up a display name for a folder ID, falling back to the raw ID
- * with a capitalised first letter.
+ * Look up a display name for a folder ID. System folders use the names above
+ * (their stored names are English); custom folders fall back to their own
+ * name, then to the raw ID with a capitalised first letter.
  */
-export function getFolderDisplayName(folderId: string): string {
-	return FOLDER_DISPLAY_NAMES[folderId.toLowerCase()] || folderId.charAt(0).toUpperCase() + folderId.slice(1);
+export function getFolderDisplayName(folderId: string, name?: string | null): string {
+	return FOLDER_DISPLAY_NAMES[folderId.toLowerCase()] || name || folderId.charAt(0).toUpperCase() + folderId.slice(1);
 }

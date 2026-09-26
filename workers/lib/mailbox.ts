@@ -20,14 +20,14 @@ export type MailboxContext = {
 
 export const requireMailbox = createMiddleware<MailboxContext>(async (c, next) => {
 	const rawId = c.req.param("mailboxId");
-	if (!rawId) return c.json({ error: "Mailbox ID required" }, 400);
+	if (!rawId) return c.json({ error: "缺少邮箱 ID" }, 400);
 	const mailboxId = decodeURIComponent(rawId);
 
 	// Verify mailbox exists
 	const key = `mailboxes/${mailboxId}.json`;
 	const obj = await c.env.BUCKET.head(key);
 	if (!obj) {
-		return c.json({ error: "Not found" }, 404);
+		return c.json({ error: "邮箱不存在" }, 404);
 	}
 
 	// Instantiate DO stub

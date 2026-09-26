@@ -36,8 +36,8 @@ export default function ReportSpamRoute() {
 				setSender(parsed.sender ?? null);
 				setMessage(
 					parsed.sender
-						? `已将 ${parsed.sender} 加入黑名单，邮件已移入垃圾箱。之后来自该地址的邮件会直接进 Spam。`
-						: "邮件已移入垃圾箱。",
+						? `已将 ${parsed.sender} 加入黑名单，邮件已移到垃圾邮件。之后来自该地址的邮件会直接进入垃圾邮件。`
+						: "邮件已移到垃圾邮件。",
 				);
 				return;
 			}
@@ -57,8 +57,8 @@ export default function ReportSpamRoute() {
 				setSender(res.sender);
 				setMessage(
 					res.sender
-						? `已将 ${res.sender} 加入黑名单，邮件已移入垃圾箱。之后来自该地址的邮件会直接进 Spam。`
-						: "邮件已移入垃圾箱。",
+						? `已将 ${res.sender} 加入黑名单，邮件已移到垃圾邮件。之后来自该地址的邮件会直接进入垃圾邮件。`
+						: "邮件已移到垃圾邮件。",
 				);
 			})
 			.catch((err) => {
@@ -97,7 +97,7 @@ export default function ReportSpamRoute() {
 				)}
 				<div className="flex flex-col sm:flex-row gap-2 justify-center">
 					<Button variant="primary" onClick={() => navigate(spamHref)}>
-						查看垃圾箱
+						查看垃圾邮件
 					</Button>
 					<Button variant="secondary" onClick={() => navigate(inboxHref)}>
 						返回收件箱

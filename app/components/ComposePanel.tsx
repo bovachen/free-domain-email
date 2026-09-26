@@ -56,7 +56,7 @@ export default function ComposePanel() {
 						icon={<XIcon size={18} />}
 						onClick={closeCompose}
 						disabled={isSending}
-						aria-label="Close compose"
+						aria-label="关闭写邮件窗口"
 					/>
 				</div>
 			</div>
@@ -72,7 +72,7 @@ export default function ComposePanel() {
 						{mailboxes.length > 1 && (
 							<div className="flex items-center gap-2">
 								<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0">
-									From
+									发件人
 								</label>
 								<select
 									className="flex-1 rounded-md border border-kumo-line bg-kumo-base px-2 py-1.5 text-sm"
@@ -89,7 +89,7 @@ export default function ComposePanel() {
 						)}
 						<div className="flex items-center gap-2">
 							<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0">
-								To
+								收件人
 							</label>
 							<div className="flex-1 flex items-center gap-2 min-w-0">
 								<Input
@@ -106,7 +106,7 @@ export default function ComposePanel() {
 										onClick={() => setShowCcBcc(true)}
 										className="shrink-0 text-xs text-kumo-link hover:text-kumo-link-hover font-medium"
 									>
-										CC / BCC
+										抄送 / 密送
 									</button>
 								)}
 							</div>
@@ -115,7 +115,7 @@ export default function ComposePanel() {
 						{showCcBcc && (
 							<div className="flex items-center gap-2">
 								<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0">
-									CC
+									抄送
 								</label>
 								<div className="flex-1">
 									<Input
@@ -123,7 +123,7 @@ export default function ComposePanel() {
 										size="sm"
 										value={cc}
 										onChange={(e) => setCc(e.target.value)}
-										placeholder="Separate multiple addresses with commas"
+										placeholder="多个地址请用逗号分隔"
 									/>
 								</div>
 							</div>
@@ -132,7 +132,7 @@ export default function ComposePanel() {
 						{showCcBcc && (
 							<div className="flex items-center gap-2">
 								<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0">
-									BCC
+									密送
 								</label>
 								<div className="flex-1">
 									<Input
@@ -140,7 +140,7 @@ export default function ComposePanel() {
 										size="sm"
 										value={bcc}
 										onChange={(e) => setBcc(e.target.value)}
-										placeholder="Separate multiple addresses with commas"
+										placeholder="多个地址请用逗号分隔"
 									/>
 								</div>
 							</div>
@@ -148,12 +148,12 @@ export default function ComposePanel() {
 
 						<div className="flex items-center gap-2">
 							<label className="text-sm font-medium text-kumo-subtle w-14 shrink-0">
-								Subject
+								主题
 							</label>
 							<div className="flex-1">
 								<Input
 									type="text"
-									placeholder="Email subject"
+									placeholder="邮件主题"
 									size="sm"
 									value={subject}
 									onChange={(e) => setSubject(e.target.value)}
@@ -175,7 +175,7 @@ export default function ComposePanel() {
 				<div className="mt-auto px-4 py-3 border-t border-kumo-line bg-kumo-fill/30 shrink-0 md:px-6">
 					<div className="flex items-center justify-between">
 						<Button type="button" variant="ghost" size="sm" onClick={closeCompose} disabled={isSending}>
-							Discard
+							丢弃
 						</Button>
 						<div className="flex items-center gap-2">
 							<Button
@@ -187,7 +187,7 @@ export default function ComposePanel() {
 								icon={<FloppyDiskIcon size={14} />}
 								onClick={handleSaveDraft}
 							>
-								{isSavingDraft ? "Saving..." : "Save as Draft"}
+								{isSavingDraft ? "正在保存…" : "保存草稿"}
 							</Button>
 							<Button
 								type="submit"
@@ -197,7 +197,7 @@ export default function ComposePanel() {
 								disabled={isSavingDraft || isSending}
 								icon={<PaperPlaneTiltIcon size={14} />}
 							>
-								{isSending ? "Sending..." : "Send"}
+								{isSending ? "正在发送…" : "发送"}
 							</Button>
 						</div>
 					</div>

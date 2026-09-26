@@ -10,6 +10,9 @@
  * imported by both the frontend and backend.
  */
 
+/** The UI is Chinese; format dates the same way in the browser, SSR and Workers. */
+const LOCALE = "zh-CN";
+
 /** Parse safely — returns null on invalid dates instead of NaN-date. */
 function safeParse(dateStr: string | undefined | null): Date | null {
 	if (!dateStr) return null;
@@ -23,9 +26,9 @@ function safeParse(dateStr: string | undefined | null): Date | null {
 
 /**
  * Email list rows.
- * - Today: "3:42 PM"
- * - This year: "Apr 15"
- * - Older: "Apr 15, 2024"
+ * - Today: "15:42"
+ * - This year: "4月15日"
+ * - Older: "2024年4月15日"
  */
 export function formatListDate(dateStr: string): string {
 	const date = safeParse(dateStr);
@@ -33,18 +36,18 @@ export function formatListDate(dateStr: string): string {
 
 	const now = new Date();
 	if (date.toDateString() === now.toDateString()) {
-		return date.toLocaleTimeString(undefined, {
+		return date.toLocaleTimeString(LOCALE, {
 			hour: "numeric",
 			minute: "2-digit",
 		});
 	}
 	if (date.getFullYear() === now.getFullYear()) {
-		return date.toLocaleDateString(undefined, {
+		return date.toLocaleDateString(LOCALE, {
 			month: "short",
 			day: "numeric",
 		});
 	}
-	return date.toLocaleDateString(undefined, {
+	return date.toLocaleDateString(LOCALE, {
 		month: "short",
 		day: "numeric",
 		year: "numeric",
@@ -53,13 +56,13 @@ export function formatListDate(dateStr: string): string {
 
 /**
  * Email detail header.
- * "Tue, Apr 15, 3:42 PM"
+ * "4月15日周三 15:42"
  */
 export function formatDetailDate(dateStr: string): string {
 	const date = safeParse(dateStr);
 	if (!date) return dateStr;
 
-	return date.toLocaleDateString(undefined, {
+	return date.toLocaleDateString(LOCALE, {
 		weekday: "short",
 		month: "short",
 		day: "numeric",
@@ -70,13 +73,13 @@ export function formatDetailDate(dateStr: string): string {
 
 /**
  * Thread message headers — time only.
- * "3:42 PM"
+ * "15:42"
  */
 export function formatShortDate(dateStr: string): string {
 	const date = safeParse(dateStr);
 	if (!date) return dateStr;
 
-	return date.toLocaleTimeString(undefined, {
+	return date.toLocaleTimeString(LOCALE, {
 		hour: "numeric",
 		minute: "2-digit",
 	});
@@ -84,9 +87,9 @@ export function formatShortDate(dateStr: string): string {
 
 /**
  * Compose quoted replies & backend quoted blocks.
- * "Tue, Apr 15, 2026, 3:42 PM"
+ * "2026年4月15日周三 15:42"
  *
- * Uses explicit "en-US" locale for deterministic output on both browser
+ * Uses an explicit locale for deterministic output on both browser
  * and Cloudflare Workers (which support `toLocaleString`).
  */
 export function formatQuotedDate(dateStr: string | undefined): string {
@@ -94,13 +97,13 @@ export function formatQuotedDate(dateStr: string | undefined): string {
 	const date = safeParse(dateStr);
 	if (!date) return dateStr;
 
-	return date.toLocaleString("en-US", {
+	return date.toLocaleString(LOCALE, {
 		weekday: "short",
 		month: "short",
 		day: "numeric",
 		year: "numeric",
 		hour: "numeric",
 		minute: "2-digit",
-		hour12: true,
+		hour12: false,
 	});
 }

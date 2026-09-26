@@ -42,7 +42,7 @@ export async function addToBlacklist(
 ): Promise<BlacklistEntry[]> {
 	const address = normalizeSenderAddress(entry.address);
 	if (!isValidEmailAddress(address)) {
-		throw new Error("Invalid email address");
+		throw new Error("邮箱地址无效");
 	}
 	const entries = await getBlacklist(bucket);
 	const next = entries.filter((item) => item.address !== address);
@@ -89,12 +89,12 @@ export async function reportEmailAsSpam(
 > {
 	const key = `mailboxes/${mailboxId}.json`;
 	if (!(await env.BUCKET.head(key))) {
-		return { error: "Mailbox not found", status: 404 };
+		return { error: "邮箱不存在", status: 404 };
 	}
 
 	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
 	const email = (await stub.getEmail(emailId)) as { sender?: string } | null;
-	if (!email) return { error: "Email not found", status: 404 };
+	if (!email) return { error: "邮件不存在", status: 404 };
 
 	const sender = normalizeSenderAddress(email.sender || "");
 	const blocked = Boolean(sender && sender !== mailboxId.toLowerCase() && isValidEmailAddress(sender));

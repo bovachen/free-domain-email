@@ -216,7 +216,7 @@ export function buildQuotedReplyBlock(original: {
 	const plainBody = stripHtmlToText(original.body);
 	const bodyToQuote = escapeHtml(plainBody).replace(/\n/g, "<br>");
 
-	return `<br><blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;">On ${originalDate}, ${originalSender} wrote:<br><br>${bodyToQuote}</blockquote>`;
+	return `<br><blockquote style="border-left: 2px solid #ccc; margin: 0; padding-left: 1em; color: #666;">${originalDate}，${originalSender} 写道：<br><br>${bodyToQuote}</blockquote>`;
 }
 
 // ── Tool Logic (getFullEmail / getFullThread) ──────────────────────

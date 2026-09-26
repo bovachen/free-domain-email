@@ -21,7 +21,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
-import { Folders } from "shared/folders";
+import { Folders, getFolderDisplayName } from "shared/folders";
 import { formatListDate } from "shared/dates";
 import MailboxSplitView from "~/components/MailboxSplitView";
 import { getSnippetText } from "~/lib/utils";
@@ -50,42 +50,42 @@ const FOLDER_EMPTY_STATES: Record<
 > = {
 	[Folders.INBOX]: {
 		icon: <TrayIcon size={48} weight="thin" className="text-kumo-subtle" />,
-		title: "Your inbox is empty",
+		title: "收件箱是空的",
 		description:
-			"New emails will appear here when they arrive. Send an email to get the conversation started.",
+			"新邮件到达后会显示在这里。发一封邮件，开始对话吧。",
 		showCompose: true,
 	},
 	[Folders.SENT]: {
 		icon: (
 			<PaperPlaneTiltIcon size={48} weight="thin" className="text-kumo-subtle" />
 		),
-		title: "No sent emails",
-		description: "Emails you send will show up here.",
+		title: "没有已发送的邮件",
+		description: "发出的邮件会显示在这里。",
 		showCompose: true,
 	},
 	[Folders.DRAFT]: {
 		icon: <FileIcon size={48} weight="thin" className="text-kumo-subtle" />,
-		title: "No drafts",
-		description: "Emails you're still working on will be saved here.",
+		title: "没有草稿",
+		description: "还没写完的邮件会保存在这里。",
 		showCompose: true,
 	},
 	[Folders.ARCHIVE]: {
 		icon: <ArchiveIcon size={48} weight="thin" className="text-kumo-subtle" />,
-		title: "Archive is empty",
+		title: "归档是空的",
 		description:
-			"Move emails here to keep your inbox clean without deleting them.",
+			"把邮件移到这里，无需删除也能让收件箱保持整洁。",
 	},
 	[Folders.TRASH]: {
 		icon: <TrashIcon size={48} weight="thin" className="text-kumo-subtle" />,
-		title: "Trash is empty",
+		title: "废纸篓是空的",
 		description:
-			"Deleted emails will appear here. You can restore them or permanently delete them.",
+			"删除的邮件会显示在这里，可以恢复或永久删除。",
 	},
 	[Folders.SPAM]: {
 		icon: <WarningIcon size={48} weight="thin" className="text-kumo-subtle" />,
-		title: "No spam",
+		title: "没有垃圾邮件",
 		description:
-			"Reported junk and mail from blocked senders will show up here.",
+			"举报的垃圾邮件和已拉黑发件人的邮件会显示在这里。",
 	},
 };
 
@@ -122,8 +122,8 @@ function FolderEmptyState({
 		icon: (
 			<EnvelopeSimpleIcon size={48} weight="thin" className="text-kumo-subtle" />
 		),
-		title: "No emails",
-		description: "This folder is empty.",
+		title: "没有邮件",
+		description: "此文件夹是空的。",
 	};
 
 	return (
@@ -142,7 +142,7 @@ function FolderEmptyState({
 					icon={<PencilSimpleIcon size={16} />}
 					onClick={onCompose}
 				>
-					Compose
+					写邮件
 				</Button>
 			)}
 		</div>
@@ -197,8 +197,7 @@ export default function EmailListRoute() {
 
 	const folderName = useMemo(() => {
 		const found = folders.find((f) => f.id === folder);
-		if (found) return found.name;
-		return folder ? folder.charAt(0).toUpperCase() + folder.slice(1) : "Inbox";
+		return getFolderDisplayName(folder || Folders.INBOX, found?.name);
 	}, [folders, folder]);
 
 	const isPanelOpen = selectedEmailId !== null || isComposing;
@@ -244,7 +243,7 @@ export default function EmailListRoute() {
 		e.stopPropagation();
 		const box = boxId || mailboxId;
 		if (box) {
-			const confirmed = window.confirm("Are you sure you want to delete this email?");
+			const confirmed = window.confirm("确定要删除这封邮件吗？");
 			if (!confirmed) return;
 			deleteEmail.mutate({ mailboxId: box, id: emailId });
 			if (selectedEmailId === emailId) closePanel();
@@ -256,8 +255,8 @@ export default function EmailListRoute() {
 		e.stopPropagation();
 		const box = mailboxOf(email);
 		if (!box) return;
-		const senderLabel = email.sender || "this sender";
-		if (!window.confirm(`Report as spam and block ${senderLabel}? Future mail from this sender will go to Spam.`)) {
+		const blockLabel = email.sender ? `拉黑 ${email.sender}` : "拉黑该发件人";
+		if (!window.confirm(`举报为垃圾邮件并${blockLabel}？之后该发件人的邮件会直接进入垃圾邮件。`)) {
 			return;
 		}
 		reportSpam.mutate(
@@ -266,14 +265,14 @@ export default function EmailListRoute() {
 				onSuccess: (result) => {
 					toastManager.add({
 						title: result.sender
-							? `Blocked ${result.sender} and moved to Spam`
-							: "Moved to Spam",
+							? `已拉黑 ${result.sender}，邮件已移到垃圾邮件`
+							: "已移到垃圾邮件",
 					});
 					if (selectedEmailId === email.id) closePanel();
 				},
 				onError: (err) => {
 					toastManager.add({
-						title: err instanceof Error ? err.message : "Failed to report spam",
+						title: err instanceof Error ? err.message : "举报失败",
 						variant: "error",
 					});
 				},
@@ -348,11 +347,11 @@ export default function EmailListRoute() {
 					<div className="flex items-center gap-1">
 						{totalCount > 0 && (
 							<span className="text-sm text-kumo-subtle mr-2 hidden sm:inline">
-								{totalCount} conversation{totalCount !== 1 ? "s" : ""}
+								共 {totalCount} 个会话
 							</span>
 						)}
 						<Tooltip
-							content={isRefreshing ? "Refreshing..." : "Refresh"}
+							content={isRefreshing ? "正在刷新…" : "刷新"}
 							side="bottom"
 							asChild
 						>
@@ -368,7 +367,7 @@ export default function EmailListRoute() {
 								}
 								onClick={handleRefresh}
 								disabled={isRefreshing}
-								aria-label="Refresh"
+								aria-label="刷新"
 							/>
 						</Tooltip>
 					</div>
@@ -441,11 +440,11 @@ export default function EmailListRoute() {
 												)}
 												{email.has_draft && (
 													<span className="shrink-0 text-xs text-kumo-destructive font-medium">
-														Draft
+														草稿
 													</span>
 												)}
 												{email.needs_reply && !email.has_draft && (
-													<Tooltip content="Needs reply" asChild>
+													<Tooltip content="待回复" asChild>
 														<span className="shrink-0 text-kumo-warning">
 															<ArrowBendUpLeftIcon size={14} weight="bold" />
 														</span>
@@ -476,7 +475,7 @@ export default function EmailListRoute() {
 
 										{/* Hover actions */}
 										<div className="hidden group-hover:flex items-center shrink-0">
-											<Tooltip content={email.read ? "Mark unread" : "Mark read"} asChild>
+											<Tooltip content={email.read ? "标为未读" : "标为已读"} asChild>
 												<Button
 													variant="ghost"
 													shape="square"
@@ -491,29 +490,29 @@ export default function EmailListRoute() {
 																data: { read: !email.read },
 															});
 													}}
-													aria-label={email.read ? "Mark unread" : "Mark read"}
+													aria-label={email.read ? "标为未读" : "标为已读"}
 												/>
 											</Tooltip>
 											{folder !== Folders.SPAM && folder !== Folders.SENT && folder !== Folders.DRAFT && (
-												<Tooltip content="Report spam and block sender" asChild>
+												<Tooltip content="举报垃圾邮件并拉黑发件人" asChild>
 													<Button
 														variant="ghost"
 														shape="square"
 														size="sm"
 														icon={<FlagIcon size={14} className="text-kumo-destructive" />}
 														onClick={(e) => handleReportSpam(e, email)}
-														aria-label="Report spam and block sender"
+														aria-label="举报垃圾邮件并拉黑发件人"
 													/>
 												</Tooltip>
 											)}
-											<Tooltip content="Delete" asChild>
+											<Tooltip content="删除" asChild>
 												<Button
 													variant="ghost"
 													shape="square"
 													size="sm"
 													icon={<TrashIcon size={14} />}
 													onClick={(e) => handleDelete(e, email.id, mailboxOf(email))}
-													aria-label="Delete"
+													aria-label="删除"
 												/>
 											</Tooltip>
 										</div>
@@ -537,6 +536,7 @@ export default function EmailListRoute() {
 							setPage={setPage}
 							perPage={PAGE_SIZE}
 							totalCount={totalCount}
+							text={({ pageShowingRange }) => `第 ${pageShowingRange} 个会话，共 ${totalCount} 个`}
 						/>
 					</div>
 				)}

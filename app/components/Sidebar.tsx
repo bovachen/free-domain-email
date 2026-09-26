@@ -51,12 +51,12 @@ const FOLDER_ICONS: Record<string, React.ReactNode> = {
 };
 
 const SYSTEM_FOLDER_LINKS = [
-	{ id: Folders.INBOX, label: "Inbox" },
-	{ id: Folders.DRAFT, label: "Drafts" },
-	{ id: Folders.SENT, label: "Sent" },
-	{ id: Folders.ARCHIVE, label: "Archive" },
-	{ id: Folders.SPAM, label: "Spam" },
-	{ id: Folders.TRASH, label: "Trash" },
+	{ id: Folders.INBOX, label: "收件箱" },
+	{ id: Folders.DRAFT, label: "草稿" },
+	{ id: Folders.SENT, label: "已发送" },
+	{ id: Folders.ARCHIVE, label: "归档" },
+	{ id: Folders.SPAM, label: "垃圾邮件" },
+	{ id: Folders.TRASH, label: "废纸篓" },
 ];
 
 function FolderLink({
@@ -144,7 +144,7 @@ export default function Sidebar() {
 	}, [telegram]);
 
 	const telegramError = (err: unknown) =>
-		err instanceof Error ? err.message : "Telegram request failed";
+		err instanceof Error ? err.message : "Telegram 请求失败";
 
 	const handleSaveTelegram = async () => {
 		setTelegramBusy(true);
@@ -155,7 +155,7 @@ export default function Sidebar() {
 				inboxBaseUrl: inboxBaseUrl.trim() || undefined,
 			});
 			setBotToken("");
-			toastManager.add({ title: "Telegram settings saved" });
+			toastManager.add({ title: "Telegram 设置已保存" });
 		} catch (err) {
 			toastManager.add({ title: telegramError(err), variant: "error" });
 		} finally {
@@ -173,7 +173,7 @@ export default function Sidebar() {
 			const data = await api.discoverTelegramChat();
 			queryClient.setQueryData(queryKeys.telegram, data);
 			setChatId(data.chatId);
-			toastManager.add({ title: `Found chat ${data.chatId}` });
+			toastManager.add({ title: `已找到对话 ${data.chatId}` });
 		} catch (err) {
 			toastManager.add({ title: telegramError(err), variant: "error" });
 		} finally {
@@ -192,7 +192,7 @@ export default function Sidebar() {
 				setBotToken("");
 			}
 			await api.testTelegram();
-			toastManager.add({ title: "Test message sent" });
+			toastManager.add({ title: "测试消息已发送" });
 		} catch (err) {
 			toastManager.add({ title: telegramError(err), variant: "error" });
 		} finally {
@@ -216,8 +216,8 @@ export default function Sidebar() {
 			queryClient.setQueryData(queryKeys.telegram, data);
 			toastManager.add({
 				title: data.webhookConfigured
-					? "Webhook connected — buttons and replies now work inside Telegram"
-					: "Webhook disconnected",
+					? "Webhook 已连接，现在可直接在 Telegram 中使用按钮和回复"
+					: "Webhook 已断开",
 			});
 		} catch (err) {
 			toastManager.add({ title: telegramError(err), variant: "error" });
@@ -236,10 +236,10 @@ export default function Sidebar() {
 		try {
 			await addToBlacklist.mutateAsync(address);
 			setBlacklistAddress("");
-			toastManager.add({ title: `Blocked ${address}` });
+			toastManager.add({ title: `已拉黑 ${address}` });
 		} catch (err) {
 			toastManager.add({
-				title: err instanceof Error ? err.message : "Failed to block address",
+				title: err instanceof Error ? err.message : "拉黑失败",
 				variant: "error",
 			});
 		}
@@ -248,10 +248,10 @@ export default function Sidebar() {
 	const handleRemoveBlacklist = async (address: string) => {
 		try {
 			await removeFromBlacklist.mutateAsync(address);
-			toastManager.add({ title: `Unblocked ${address}` });
+			toastManager.add({ title: `已解除拉黑 ${address}` });
 		} catch (err) {
 			toastManager.add({
-				title: err instanceof Error ? err.message : "Failed to unblock address",
+				title: err instanceof Error ? err.message : "解除拉黑失败",
 				variant: "error",
 			});
 		}
@@ -269,7 +269,7 @@ export default function Sidebar() {
 	const grouped = useMemo(() => {
 		const byDomain: Record<string, typeof mailboxes> = {};
 		for (const box of mailboxes) {
-			const domain = box.email.split("@")[1] || "other";
+			const domain = box.email.split("@")[1] || "其他";
 			if (!byDomain[domain]) byDomain[domain] = [];
 			byDomain[domain].push(box);
 		}
@@ -287,9 +287,9 @@ export default function Sidebar() {
 	return (
 		<aside className="h-full w-64 bg-kumo-recessed flex flex-col shrink-0 border-r border-kumo-line">
 			<div className="px-4 pt-4 pb-1">
-				<div className="text-base font-semibold text-kumo-default">Mail</div>
+				<div className="text-base font-semibold text-kumo-default">邮件</div>
 				<div className="text-xs text-kumo-subtle mt-0.5">
-					{mailboxes.length} account{mailboxes.length === 1 ? "" : "s"}
+					{mailboxes.length} 个账户
 				</div>
 			</div>
 
@@ -300,20 +300,20 @@ export default function Sidebar() {
 					onClick={handleCompose}
 					className="w-full"
 				>
-					Compose
+					写邮件
 				</Button>
 			</div>
 
 			<nav className="flex-1 overflow-y-auto px-2 space-y-0.5">
 				<div className="px-3 pt-1 pb-1 text-xs uppercase tracking-wider font-semibold text-kumo-subtle">
-					Favorites
+					个人收藏
 				</div>
 				{SYSTEM_FOLDER_LINKS.map((item) => (
 					<FolderLink
 						key={`all-${item.id}`}
 						to={`/mail/emails/${item.id}`}
 						icon={FOLDER_ICONS[item.id]}
-						label={item.id === Folders.INBOX ? "All Inboxes" : item.label}
+						label={item.id === Folders.INBOX ? "所有收件箱" : item.label}
 						unreadCount={unifiedUnread[item.id]}
 						onClick={handleNavClick}
 					/>
@@ -321,9 +321,9 @@ export default function Sidebar() {
 
 				<div className="flex items-center justify-between px-3 pt-5 pb-1">
 					<span className="text-xs uppercase tracking-wider font-semibold text-kumo-subtle">
-						Accounts
+						账户
 					</span>
-					<Tooltip content="Add mailbox" asChild>
+					<Tooltip content="添加邮箱" asChild>
 						<Button
 							variant="ghost"
 							shape="square"
@@ -333,7 +333,7 @@ export default function Sidebar() {
 								setSelectedDomain(domains[0] || "");
 								setIsCreateMailboxOpen(true);
 							}}
-							aria-label="Add mailbox"
+							aria-label="添加邮箱"
 						/>
 					</Tooltip>
 				</div>
@@ -376,7 +376,7 @@ export default function Sidebar() {
 										customFolders.map((cf) => (
 											<FolderLink
 												key={cf.id}
-												to={`/mail/mailbox/${encodeURIComponent(box.id)}/emails/${cf.id}`}
+												to={`/mail/mailbox/${encodeURIComponent(box.id)}/emails/${encodeURIComponent(cf.id)}`}
 												icon={<FolderIcon size={16} />}
 												label={cf.name}
 												unreadCount={cf.unreadCount}
@@ -391,7 +391,7 @@ export default function Sidebar() {
 											className="flex items-center gap-3 w-full py-1.5 pl-8 pr-3 rounded-md text-sm text-kumo-subtle hover:bg-kumo-tint"
 										>
 											<PlusIcon size={16} />
-											<span>New folder</span>
+											<span>新建文件夹</span>
 										</button>
 									)}
 								</div>
@@ -408,13 +408,13 @@ export default function Sidebar() {
 					className="flex items-center gap-2 w-full px-3 py-2 text-sm text-kumo-strong hover:bg-kumo-tint rounded-md"
 				>
 					<GearSixIcon size={16} />
-					<span className="flex-1 text-left">Catch-all addresses</span>
+					<span className="flex-1 text-left">通配地址</span>
 					{wildcardOpen ? <CaretDownIcon size={12} /> : <CaretRightIcon size={12} />}
 				</button>
 				{wildcardOpen && (
 					<div className="px-3 pb-2 space-y-2">
 						<p className="text-xs text-kumo-subtle">
-							When on, any prefix at that domain is accepted and a mailbox is created automatically.
+							开启后，发往该域名任意前缀的邮件都会被接收，并自动创建对应邮箱。
 						</p>
 						{domains.map((domain) => (
 							<label key={domain} className="flex items-center justify-between gap-2 text-sm">
@@ -426,7 +426,7 @@ export default function Sidebar() {
 									onChange={(e) =>
 										updateWildcard.mutate({ [domain]: e.target.checked })
 									}
-									aria-label={`Catch-all for ${domain}`}
+									aria-label={`${domain} 的通配地址`}
 								/>
 							</label>
 						))}
@@ -438,33 +438,33 @@ export default function Sidebar() {
 					className="flex items-center gap-2 w-full px-3 py-2 text-sm text-kumo-strong hover:bg-kumo-tint rounded-md"
 				>
 					<TelegramLogoIcon size={16} />
-					<span className="flex-1 text-left">Telegram alerts</span>
-					{telegramReady && <span className="text-xs text-kumo-subtle">On</span>}
+					<span className="flex-1 text-left">Telegram 通知</span>
+					{telegramReady && <span className="text-xs text-kumo-subtle">已开启</span>}
 					{telegramOpen ? <CaretDownIcon size={12} /> : <CaretRightIcon size={12} />}
 				</button>
 				{telegramOpen && (
 					<div className="px-3 pb-2 space-y-2">
 						<p className="text-xs text-kumo-subtle">
-							Incoming mail is previewed in Telegram. Buttons mark read, star, delete, flag spam or block the sender in place, and replying to the message sends an email reply — no browser needed.
+							新邮件会在 Telegram 中预览。可通过按钮直接标为已读、加星标、删除、举报垃圾邮件或拉黑发件人，回复该消息即可回复邮件，无需打开浏览器。
 						</p>
 						<label className="flex items-center justify-between gap-2 text-sm">
-							<span>Enable</span>
+							<span>启用</span>
 							<input
 								type="checkbox"
 								className="h-4 w-4 accent-kumo-brand"
 								checked={telegram?.enabled === true}
 								onChange={(e) => updateTelegram.mutate({ enabled: e.target.checked })}
-								aria-label="Enable Telegram notifications"
+								aria-label="启用 Telegram 通知"
 							/>
 						</label>
 						<input
-							aria-label="Bot token"
+							aria-label="Bot Token"
 							type="password"
 							autoComplete="off"
 							placeholder={
 								telegram?.botTokenConfigured
-									? "Token saved — paste to replace"
-									: "Bot token from @BotFather"
+									? "Token 已保存，粘贴可替换"
+									: "从 @BotFather 获取的 Token"
 							}
 							value={botToken}
 							onChange={(e) => setBotToken(e.target.value)}
@@ -478,7 +478,7 @@ export default function Sidebar() {
 							className="w-full rounded-md border border-kumo-line bg-kumo-base px-2 py-1.5 text-sm"
 						/>
 						<input
-							aria-label="Inbox URL"
+							aria-label="收件箱 URL"
 							placeholder="https://inbox.example.com"
 							value={inboxBaseUrl}
 							onChange={(e) => setInboxBaseUrl(e.target.value)}
@@ -491,7 +491,7 @@ export default function Sidebar() {
 								disabled={telegramBusy}
 								onClick={() => void handleSaveTelegram()}
 							>
-								Save
+								保存
 							</Button>
 							<Button
 								size="sm"
@@ -499,7 +499,7 @@ export default function Sidebar() {
 								disabled={telegramBusy}
 								onClick={() => void handleDiscoverTelegram()}
 							>
-								Detect chat
+								检测对话
 							</Button>
 							<Button
 								size="sm"
@@ -507,7 +507,7 @@ export default function Sidebar() {
 								disabled={telegramBusy}
 								onClick={() => void handleTestTelegram()}
 							>
-								Test
+								测试
 							</Button>
 							<Button
 								size="sm"
@@ -515,23 +515,23 @@ export default function Sidebar() {
 								disabled={telegramBusy || !telegram?.botTokenConfigured}
 								onClick={() => void handleToggleWebhook()}
 							>
-								{telegram?.webhookConfigured ? "Disconnect webhook" : "Connect webhook"}
+								{telegram?.webhookConfigured ? "断开 Webhook" : "连接 Webhook"}
 							</Button>
 						</div>
 						{telegram?.webhookConfigured && (
 							<p className="text-xs text-kumo-subtle font-mono break-all">
-								Webhook: {telegram.webhookUrl}
+								Webhook：{telegram.webhookUrl}
 							</p>
 						)}
 						{telegram?.mode === "polling" && (
 							<p className="text-xs text-kumo-subtle">
-								Mode: polling (cron, every minute). Buttons and replies work without any Access changes; a tap usually lands within a few seconds.
-								{telegram.lastPollAt && ` Last poll: ${new Date(telegram.lastPollAt).toLocaleTimeString()}.`}
-								{telegram.lastPollError && ` Last error: ${telegram.lastPollError}`}
+								模式：轮询（cron，每分钟一次）。按钮和回复无需修改任何 Access 设置即可使用，点击后通常几秒内生效。
+								{telegram.lastPollAt && `上次轮询：${new Date(telegram.lastPollAt).toLocaleTimeString("zh-CN")}。`}
+								{telegram.lastPollError && `最近错误：${telegram.lastPollError}`}
 							</p>
 						)}
 						<p className="text-xs text-kumo-subtle">
-							Message @BotFather to create a bot, paste the token, then open the bot and send /start — the chat binds automatically. Alert buttons act directly in Telegram via polling by default. Connect webhook only if you want instant delivery; the Cloudflare Access app must then bypass {telegram?.webhookUrl ? new URL(telegram.webhookUrl).pathname : "/api/telegram/webhook"}.
+							通过 @BotFather 创建机器人并粘贴其 Token，然后打开该机器人发送 /start，对话即会自动绑定。通知中的按钮默认通过轮询直接在 Telegram 中生效。仅在需要即时送达时才连接 Webhook，届时须在 Cloudflare Access 应用中为 {telegram?.webhookUrl ? new URL(telegram.webhookUrl).pathname : "/api/telegram/webhook"} 配置绕过（Bypass）策略。
 						</p>
 					</div>
 				)}
@@ -541,7 +541,7 @@ export default function Sidebar() {
 					className="flex items-center gap-2 w-full px-3 py-2 text-sm text-kumo-strong hover:bg-kumo-tint rounded-md"
 				>
 					<ProhibitIcon size={16} />
-					<span className="flex-1 text-left">Blacklist</span>
+					<span className="flex-1 text-left">黑名单</span>
 					{(blacklist?.entries.length ?? 0) > 0 && (
 						<span className="text-xs text-kumo-subtle">{blacklist?.entries.length}</span>
 					)}
@@ -550,11 +550,11 @@ export default function Sidebar() {
 				{blacklistOpen && (
 					<div className="px-3 pb-2 space-y-2">
 						<p className="text-xs text-kumo-subtle">
-							Blocked senders skip the inbox and Telegram alerts. Reporting spam also adds the sender here.
+							已拉黑的发件人不会进入收件箱，也不会触发 Telegram 通知。举报垃圾邮件时也会将发件人加入黑名单。
 						</p>
 						<div className="flex gap-1">
 							<input
-								aria-label="Address to block"
+								aria-label="要拉黑的地址"
 								placeholder="spam@example.com"
 								value={blacklistAddress}
 								onChange={(e) => setBlacklistAddress(e.target.value)}
@@ -572,12 +572,12 @@ export default function Sidebar() {
 								disabled={addToBlacklist.isPending || !blacklistAddress.trim()}
 								onClick={() => void handleAddBlacklist()}
 							>
-								Block
+								拉黑
 							</Button>
 						</div>
 						<div className="max-h-40 overflow-y-auto space-y-1">
 							{(blacklist?.entries ?? []).length === 0 ? (
-								<p className="text-xs text-kumo-subtle">No blocked senders.</p>
+								<p className="text-xs text-kumo-subtle">暂无已拉黑的发件人。</p>
 							) : (
 								blacklist?.entries.map((entry) => (
 									<div
@@ -590,7 +590,7 @@ export default function Sidebar() {
 										<button
 											type="button"
 											className="shrink-0 text-kumo-subtle hover:text-kumo-destructive"
-											aria-label={`Unblock ${entry.address}`}
+											aria-label={`解除拉黑 ${entry.address}`}
 											onClick={() => void handleRemoveBlacklist(entry.address)}
 										>
 											<XIcon size={12} />
@@ -607,7 +607,7 @@ export default function Sidebar() {
 						onClick={handleNavClick}
 						className="flex items-center gap-2 px-3 py-2 text-sm text-kumo-strong hover:bg-kumo-tint rounded-md"
 					>
-						Account settings
+						账户设置
 					</NavLink>
 				)}
 			</div>
@@ -615,7 +615,7 @@ export default function Sidebar() {
 			<Dialog.Root open={isCreateMailboxOpen} onOpenChange={setIsCreateMailboxOpen}>
 				<Dialog size="sm" className="p-6">
 					<Dialog.Title className="text-base font-semibold mb-4">
-						Add mailbox
+						添加邮箱
 					</Dialog.Title>
 					<form
 						onSubmit={(e) => {
@@ -637,7 +637,7 @@ export default function Sidebar() {
 					>
 						<div className="flex items-center gap-2">
 							<Input
-								aria-label="Prefix"
+								aria-label="前缀"
 								placeholder="hello"
 								value={newPrefix}
 								onChange={(e) => setNewPrefix(e.target.value)}
@@ -660,12 +660,12 @@ export default function Sidebar() {
 							<Dialog.Close
 								render={(props) => (
 									<Button {...props} variant="secondary">
-										Cancel
+										取消
 									</Button>
 								)}
 							/>
 							<Button type="submit" variant="primary">
-								Create
+								创建
 							</Button>
 						</div>
 					</form>
@@ -675,7 +675,7 @@ export default function Sidebar() {
 			<Dialog.Root open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
 				<Dialog size="sm" className="p-6">
 					<Dialog.Title className="text-base font-semibold mb-4">
-						Create folder
+						新建文件夹
 					</Dialog.Title>
 					<form
 						onSubmit={(e) => {
@@ -689,8 +689,8 @@ export default function Sidebar() {
 						className="space-y-4"
 					>
 						<Input
-							label="Folder name"
-							placeholder="e.g. Projects"
+							label="文件夹名称"
+							placeholder="例如：项目"
 							value={newFolderName}
 							onChange={(e) => setNewFolderName(e.target.value)}
 							required
@@ -699,12 +699,12 @@ export default function Sidebar() {
 							<Dialog.Close
 								render={(props) => (
 									<Button {...props} variant="secondary">
-										Cancel
+										取消
 									</Button>
 								)}
 							/>
 							<Button type="submit" variant="primary" disabled={!newFolderName.trim()}>
-								Create
+								创建
 							</Button>
 						</div>
 					</form>

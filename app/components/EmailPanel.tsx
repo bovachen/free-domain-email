@@ -95,7 +95,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
 	const handleMove = (folderId: string) => { if (mailboxId) { moveEmailMut.mutate({ mailboxId, id: email.id, folderId }); closePanel(); } };
-	const handleDelete = () => { if (mailboxId) { if (!window.confirm("Are you sure you want to delete this email?")) return; deleteEmailMut.mutate({ mailboxId, id: email.id }); closePanel(); } };
+	const handleDelete = () => { if (mailboxId) { if (!window.confirm("确定要删除这封邮件吗？")) return; deleteEmailMut.mutate({ mailboxId, id: email.id }); closePanel(); } };
 
 	const spamTarget = lastReceivedMessage?.sender && lastReceivedMessage.sender !== currentMailbox?.email
 		? lastReceivedMessage
@@ -104,22 +104,22 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 
 	const handleReportSpam = () => {
 		if (!mailboxId) return;
-		const senderLabel = spamTarget.sender || "this sender";
-		if (!window.confirm(`Report as spam and block ${senderLabel}? Future mail from this sender will go to Spam.`)) return;
+		const blockLabel = spamTarget.sender ? `拉黑 ${spamTarget.sender}` : "拉黑该发件人";
+		if (!window.confirm(`举报为垃圾邮件并${blockLabel}？之后该发件人的邮件会直接进入垃圾邮件。`)) return;
 		reportSpamMut.mutate(
 			{ mailboxId, id: spamTarget.id },
 			{
 				onSuccess: (result) => {
 					toastManager.add({
 						title: result.sender
-							? `Blocked ${result.sender} and moved to Spam`
-							: "Moved to Spam",
+							? `已拉黑 ${result.sender}，邮件已移到垃圾邮件`
+							: "已移到垃圾邮件",
 					});
 					closePanel();
 				},
 				onError: (err) => {
 					toastManager.add({
-						title: err instanceof Error ? err.message : "Failed to report spam",
+						title: err instanceof Error ? err.message : "举报失败",
 						variant: "error",
 					});
 				},
@@ -130,7 +130,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	const handleNotSpam = () => {
 		if (!mailboxId) return;
 		moveEmailMut.mutate({ mailboxId, id: email.id, folderId: Folders.INBOX });
-		toastManager.add({ title: "Moved to Inbox. Unblock the sender from Blacklist if you want future mail." });
+		toastManager.add({ title: "已移回收件箱。如需继续接收该发件人的邮件，请在黑名单中解除拉黑。" });
 		closePanel();
 	};
 
@@ -143,9 +143,9 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	const handleDeleteDraft = async (draftMsg?: Email) => {
 		const target = draftMsg || email;
 		if (!mailboxId) return;
-		if (!window.confirm("Discard this draft?")) return;
+		if (!window.confirm("确定要丢弃这封草稿吗？")) return;
 		deleteEmailMut.mutate({ mailboxId, id: target.id });
-		toastManager.add({ title: "Draft discarded" });
+		toastManager.add({ title: "草稿已丢弃" });
 		if (target.id === emailId) closePanel();
 	};
 
@@ -155,9 +155,9 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 		setIsSending(true);
 		try {
 			if (!target.recipient || !target.subject) { try { const fresh = await api.getEmail(mailboxId, target.id) as Email; if (fresh) target = fresh; } catch {} }
-			if (!target.recipient) { toastManager.add({ title: "Cannot send: no recipient set on this draft.", variant: "error" }); return; }
+			if (!target.recipient) { toastManager.add({ title: "无法发送：这封草稿没有填写收件人。", variant: "error" }); return; }
 			const toRecipients = splitEmailList(target.recipient);
-			if (toRecipients.length === 0) { toastManager.add({ title: "Cannot send: no valid recipient set on this draft.", variant: "error" }); return; }
+			if (toRecipients.length === 0) { toastManager.add({ title: "无法发送：这封草稿没有有效的收件人。", variant: "error" }); return; }
 			const fromName = currentMailbox.settings?.fromName || currentMailbox.name;
 			const from = fromName && fromName !== currentMailbox.email ? { email: currentMailbox.email, name: fromName } : currentMailbox.email;
 			const originalEmail = target.in_reply_to ? allMessages.find((msg) => msg.id === target.in_reply_to) : undefined;
@@ -166,16 +166,16 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				cc: toEmailListValue(splitEmailList(target.cc)),
 				bcc: toEmailListValue(splitEmailList(target.bcc)),
 				from,
-				subject: target.subject || "(no subject)",
+				subject: target.subject || "（无主题）",
 				html: target.body || "",
 				text: target.body ? target.body.replace(/<[^>]*>/g, "").trim() : "",
 			};
 			if (originalEmail) await replyMut.mutateAsync({ mailboxId, emailId: originalEmail.id, email: emailData }); else await sendEmailMut.mutateAsync({ mailboxId, email: emailData });
 			await deleteEmailMut.mutateAsync({ mailboxId, id: target.id });
-			toastManager.add({ title: "Email sent!" });
+			toastManager.add({ title: "邮件已发送" });
 			if (isDraftFolder) closePanel();
 		} catch (err) {
-			const message = (err instanceof Error ? err.message : null) || "Failed to send email.";
+			const message = (err instanceof Error ? err.message : null) || "邮件发送失败";
 			toastManager.add({ title: message, variant: "error" });
 		} finally { setIsSending(false); }
 	};

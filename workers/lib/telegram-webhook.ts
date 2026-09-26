@@ -314,7 +314,7 @@ async function handleMessage(env: Env, settings: TelegramSettings, message: TgMe
 		if (cmd[1].toLowerCase() === "block") {
 			await addToBlacklist(env.BUCKET, { address, reason: "telegram" });
 			await moveSenderToSpam(env, address);
-			return say(settings, chatId, `已拉黑 ${address}，其现有邮件已移到垃圾箱。`);
+			return say(settings, chatId, `已拉黑 ${address}，其现有邮件已移到垃圾邮件。`);
 		}
 		await removeFromBlacklist(env.BUCKET, address);
 		return say(settings, chatId, `已解除拉黑 ${address}。`);

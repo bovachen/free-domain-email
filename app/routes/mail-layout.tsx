@@ -45,7 +45,7 @@ export default function MailLayout() {
 					onKeyDown={(e) => e.key === "Escape" && closeSidebar()}
 					role="button"
 					tabIndex={-1}
-					aria-label="Close sidebar"
+					aria-label="关闭侧边栏"
 				/>
 			)}
 			<div

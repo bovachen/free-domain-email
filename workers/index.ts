@@ -71,9 +71,9 @@ const DraftBody = z.object({
 
 // -- Helpers --------------------------------------------------------
 
-function slugify(text: string) { // can return "" for non-alphanumeric input
+function slugify(text: string) { // can return "" for input without letters or digits
 	return text.toString().toLowerCase()
-		.replace(/\s+/g, "-").replace(/[^\w-]+/g, "")
+		.replace(/\s+/g, "-").replace(/[^\p{L}\p{N}_-]+/gu, "")
 		.replace(/--+/g, "-").replace(/^-+/, "").replace(/-+$/, "");
 }
 
@@ -161,14 +161,14 @@ app.put("/api/v1/settings/telegram", async (c) => {
 
 app.post("/api/v1/settings/telegram/discover", async (c) => {
 	const settings = await getTelegramSettings(c.env.BUCKET);
-	if (!settings.botToken) return c.json({ error: "Save a bot token first" }, 400);
+	if (!settings.botToken) return c.json({ error: "请先保存 Bot Token" }, 400);
 	if (settings.webhookSecret || settings.polling) {
-		return c.json({ error: "The bot already receives updates (webhook or polling). Send /start to the bot and the chat ID is saved automatically." }, 400);
+		return c.json({ error: "机器人已经在接收消息（Webhook 或轮询）。直接给机器人发送 /start，Chat ID 会自动保存。" }, 400);
 	}
 	try {
 		const chatId = await discoverTelegramChatId(settings.botToken);
 		if (!chatId) {
-			return c.json({ error: "No chat yet. Open the bot in Telegram and send /start, then try again." }, 404);
+			return c.json({ error: "还没有对话。请在 Telegram 里打开机器人并发送 /start，然后重试。" }, 404);
 		}
 		const saved = await setTelegramSettings(c.env.BUCKET, { chatId });
 		return c.json(toPublicTelegramSettings(saved));
@@ -245,7 +245,7 @@ app.post("/api/v1/settings/blacklist", async (c) => {
 
 app.delete("/api/v1/settings/blacklist", async (c) => {
 	const body = (await c.req.json()) as { address?: string };
-	if (!body.address) return c.json({ error: "address is required" }, 400);
+	if (!body.address) return c.json({ error: "缺少邮箱地址" }, 400);
 	const entries = await removeFromBlacklist(c.env.BUCKET, body.address);
 	return c.json({ entries });
 });
@@ -307,10 +307,10 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const email = rawEmail.toLowerCase();
 	const allowedAddresses = (c.env.EMAIL_ADDRESSES ?? []) as string[];
 	if (allowedAddresses.length > 0 && !allowedAddresses.map((a) => a.toLowerCase()).includes(email)) {
-		return c.json({ error: "Mailbox creation is restricted to configured EMAIL_ADDRESSES" }, 403);
+		return c.json({ error: "只能创建 EMAIL_ADDRESSES 中配置的邮箱" }, 403);
 	}
 	const key = `mailboxes/${email}.json`;
-	if (await c.env.BUCKET.head(key)) return c.json({ error: "Mailbox already exists" }, 409);
+	if (await c.env.BUCKET.head(key)) return c.json({ error: "邮箱已存在" }, 409);
 	const defaultSettings = { fromName: name, forwarding: { enabled: false, email: "" }, signature: { enabled: false, text: "" }, autoReply: { enabled: false, subject: "", message: "" } };
 	const finalSettings = { ...defaultSettings, ...settings };
 	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
@@ -322,7 +322,7 @@ app.post("/api/v1/mailboxes", async (c) => {
 app.get("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const obj = await c.env.BUCKET.get(`mailboxes/${mailboxId}.json`);
-	if (!obj) return c.json({ error: "Not found" }, 404);
+	if (!obj) return c.json({ error: "未找到" }, 404);
 	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings: await obj.json() });
 });
 
@@ -330,7 +330,7 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const { settings } = (await c.req.json()) as { settings: Record<string, unknown> };
 	const key = `mailboxes/${mailboxId}.json`;
-	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
+	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "未找到" }, 404);
 	await c.env.BUCKET.put(key, JSON.stringify(settings));
 	return c.json({ id: mailboxId, name: mailboxId, email: mailboxId, settings });
 });
@@ -338,7 +338,7 @@ app.put("/api/v1/mailboxes/:mailboxId", async (c) => {
 app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const key = `mailboxes/${mailboxId}.json`;
-	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "Not found" }, 404);
+	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "未找到" }, 404);
 	await c.env.BUCKET.delete(key); // TODO: also delete DO data and R2 attachment blobs
 	return c.body(null, 204);
 });
@@ -432,7 +432,7 @@ app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 
 app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	const email = await c.var.mailboxStub.getEmail(c.req.param("id")!);
-	if (!email) return c.json({ error: "Email not found" }, 404);
+	if (!email) return c.json({ error: "邮件不存在" }, 404);
 	return new Response(JSON.stringify(email), {
 		headers: { "Content-Type": "application/json" },
 	});
@@ -441,13 +441,13 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 app.put("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	const { read, starred } = (await c.req.json()) as { read?: boolean; starred?: boolean };
 	const email = await c.var.mailboxStub.updateEmail(c.req.param("id")!, { read, starred });
-	return email ? c.json(email) : c.json({ error: "Email not found" }, 404);
+	return email ? c.json(email) : c.json({ error: "邮件不存在" }, 404);
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	const id = c.req.param("id")!;
 	const attachments = await c.var.mailboxStub.deleteEmail(id);
-	if (attachments === null) return c.json({ error: "Not found" }, 404);
+	if (attachments === null) return c.json({ error: "未找到" }, 404);
 	if (attachments.length > 0) await c.env.BUCKET.delete(attachments.map((att: any) => `attachments/${id}/${att.id}/${att.filename}`));
 	return c.body(null, 204);
 });
@@ -455,7 +455,7 @@ app.delete("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) => {
 	const { folderId } = (await c.req.json()) as { folderId: string };
 	const success = await c.var.mailboxStub.moveEmail(c.req.param("id")!, folderId);
-	return success ? c.json({ status: "moved" }) : c.json({ error: "Folder not found" }, 400);
+	return success ? c.json({ status: "moved" }) : c.json({ error: "文件夹不存在" }, 400);
 });
 
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/spam", async (c: AppContext) => {
@@ -491,20 +491,20 @@ app.get("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => c.json(
 app.post("/api/v1/mailboxes/:mailboxId/folders", async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };
 	const slug = slugify(name);
-	if (!slug) return c.json({ error: "Folder name must contain alphanumeric characters" }, 400);
+	if (!slug) return c.json({ error: "文件夹名称需要包含文字或数字" }, 400);
 	const f = await c.var.mailboxStub.createFolder(slug, name);
-	return f ? c.json(f, 201) : c.json({ error: "Folder with this name already exists" }, 409);
+	return f ? c.json(f, 201) : c.json({ error: "已有同名文件夹" }, 409);
 });
 
 app.put("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
 	const { name } = (await c.req.json()) as { name: string };
 	const f = await c.var.mailboxStub.updateFolder(c.req.param("id")!, name);
-	return f ? c.json(f) : c.json({ error: "Folder not found" }, 404);
+	return f ? c.json(f) : c.json({ error: "文件夹不存在" }, 404);
 });
 
 app.delete("/api/v1/mailboxes/:mailboxId/folders/:id", async (c: AppContext) => {
 	const ok = await c.var.mailboxStub.deleteFolder(c.req.param("id")!);
-	return ok ? c.body(null, 204) : c.json({ error: "Folder not found or cannot be deleted" }, 400);
+	return ok ? c.body(null, 204) : c.json({ error: "文件夹不存在或不能删除" }, 400);
 });
 
 // -- Search ---------------------------------------------------------
@@ -528,9 +528,9 @@ app.get("/api/v1/mailboxes/:mailboxId/emails/:emailId/attachments/:attachmentId"
 	const emailId = c.req.param("emailId")!;
 	const attachmentId = c.req.param("attachmentId")!;
 	const attachment = await c.var.mailboxStub.getAttachment(attachmentId);
-	if (!attachment) return c.json({ error: "Attachment not found" }, 404);
+	if (!attachment) return c.json({ error: "附件不存在" }, 404);
 	const obj = await c.env.BUCKET.get(`attachments/${emailId}/${attachmentId}/${attachment.filename}`);
-	if (!obj) return c.json({ error: "Attachment file not found" }, 404);
+	if (!obj) return c.json({ error: "附件文件不存在" }, 404);
 	const headers = new Headers();
 	headers.set("Content-Type", attachment.mimetype);
 	const sanitized = attachment.filename.replace(/[\x00-\x1f"\\]/g, "_");

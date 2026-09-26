@@ -166,7 +166,7 @@ export async function discoverTelegramChatId(token: string): Promise<string | nu
 
 export async function sendTelegramTest(settings: TelegramSettings): Promise<void> {
 	if (!settings.botToken || !settings.chatId) {
-		throw new Error("Bot token and chat ID are required");
+		throw new Error("需要先填写 Bot Token 和 Chat ID");
 	}
 	await telegramApi(settings.botToken, "sendMessage", {
 		chat_id: settings.chatId,
@@ -189,7 +189,7 @@ function randomSecret(): string {
  */
 export async function registerTelegramWebhook(bucket: R2Bucket): Promise<TelegramSettings> {
 	const settings = await getTelegramSettings(bucket);
-	if (!settings.botToken) throw new Error("Save a bot token first");
+	if (!settings.botToken) throw new Error("请先保存 Bot Token");
 	const secret = settings.webhookSecret || randomSecret();
 	await telegramApi(settings.botToken, "setWebhook", {
 		url: telegramWebhookUrl(settings),
@@ -326,8 +326,8 @@ export async function notifyNewEmail(
 		"<b>📬 新邮件</b>",
 		"",
 		`<b>收件</b> ${escapeHtml(params.mailboxId)}`,
-		`<b>发件</b> ${escapeHtml(params.sender || "(unknown)")}`,
-		`<b>主题</b> ${escapeHtml(params.subject || "(no subject)")}`,
+		`<b>发件</b> ${escapeHtml(params.sender || "（未知）")}`,
+		`<b>主题</b> ${escapeHtml(params.subject || "（无主题）")}`,
 	];
 	if (params.attachmentCount > 0) {
 		lines.push(`<b>附件</b> ${params.attachmentCount} 个`);

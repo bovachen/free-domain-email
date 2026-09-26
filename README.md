@@ -97,11 +97,13 @@ cp wrangler.jsonc wrangler.local.jsonc
 
 ```bash
 npx wrangler login
-npx wrangler r2 bucket create free-domain-email
+npx wrangler r2 bucket create free-domain-email --config wrangler.local.jsonc
 npm run deploy
 ```
 
 部署成功后，终端会打印 Worker 的访问地址（`https://free-domain-email.<你的子域>.workers.dev`）。
+
+> 后面步骤里的 `wrangler secret put` 等命令都要加上 `--config wrangler.local.jsonc`。这类命令不会自动读取本地配置，不加的话会按 `wrangler.jsonc` 里的 Worker 名和账户操作，密钥可能被设置到别的 Worker 上。
 
 > 如果你之前部署过上游的 cloudflare/agentic-inbox，请在 `wrangler.local.jsonc` 里保留原来的 Worker 名和 R2 桶名（`agentic-inbox`）。改名会部署成一个新的 Worker，读不到原有的邮件。
 
@@ -114,8 +116,8 @@ npm run deploy
 3. 弹窗会显示 `POLICY_AUD` 和 `TEAM_DOMAIN` 两个值，把它们设置为 Worker 的密钥（secret）：
    - 命令行：分别运行下面两条命令，按提示粘贴对应的值
      ```bash
-     npx wrangler secret put POLICY_AUD
-     npx wrangler secret put TEAM_DOMAIN
+     npx wrangler secret put POLICY_AUD --config wrangler.local.jsonc
+     npx wrangler secret put TEAM_DOMAIN --config wrangler.local.jsonc
      ```
    - 或者在控制台：Worker → **Settings → Variables and Secrets（变量和机密）** → 添加，类型选 **Secret（密钥）**
 4. 开启 Access 时，在 **Authentication policy（身份验证策略）** 里选择谁能登录：**Cloudflare account** 允许这个 Cloudflare 账户的成员登录，**Email domain** 允许指定邮箱域名下的用户登录。之后可以在 Zero Trust 控制台的 Access 应用里修改。
@@ -153,7 +155,7 @@ npm run deploy
 5. 进入 **API Keys**，点击 **Create API Key**，权限选 **Sending access**（可以只允许刚才的域名），复制生成的密钥（以 `re_` 开头，只显示一次）。
 6. 把密钥保存为 Worker 的密钥 `RESEND_API_KEY`：
    ```bash
-   npx wrangler secret put RESEND_API_KEY
+   npx wrangler secret put RESEND_API_KEY --config wrangler.local.jsonc
    ```
    或者在控制台：Worker → **Settings → Variables and Secrets** → 添加，类型选 **Secret**，名称填 `RESEND_API_KEY`。
 7. 在网页里写一封邮件发给你的其他邮箱，确认能收到。

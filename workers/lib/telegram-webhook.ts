@@ -304,7 +304,7 @@ async function handleMessage(env: Env, settings: TelegramSettings, message: TgMe
 	if (String(chatId) !== settings.chatId) return;
 
 	if (text.startsWith("/start")) {
-		return say(settings, chatId, "Agentic Inbox 已连接。新邮件会推送到这里；按钮可标记已读、加星标、删除、标为垃圾邮件或拉黑发件人，直接回复通知消息即可发送邮件回复。\n\n命令：/block 地址　/unblock 地址");
+		return say(settings, chatId, "free-domain-email 已连接。新邮件会推送到这里；按钮可标记已读、加星标、删除、标为垃圾邮件或拉黑发件人，直接回复通知消息即可发送邮件回复。\n\n命令：/block 地址　/unblock 地址");
 	}
 
 	const cmd = text.match(/^\/(block|unblock)(?:@\w+)?\s+(.+)$/i);

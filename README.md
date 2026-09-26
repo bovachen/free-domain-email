@@ -1,6 +1,6 @@
 <div align="center">
-  <h1>Agentic Inbox</h1>
-  <p><em>多域名、任意前缀收信，在 Telegram 里直接处理邮件的自托管邮箱，运行在 Cloudflare Workers 上</em></p>
+  <h1>free-domain-email</h1>
+  <p><em>完全免费的自定义域名邮箱：多域名、任意前缀收信，在 Telegram 里直接处理邮件，运行在 Cloudflare Workers 上</em></p>
 </div>
 
 一个部署就能同时接收多个域名、任意前缀的邮件。新邮件实时推送到 Telegram，回复、标为已读、加星标、删除、拉黑等常用操作直接在 Telegram 里完成，不用每次都登录网页后台。所有邮件都存放在你自己的 Cloudflare 账户里。
@@ -28,7 +28,7 @@
 - **新邮件自动起草**：助手会自动阅读收到的邮件并生成回复草稿，发送前始终需要你明确确认
 - **可配置、可持久化**：每个邮箱可自定义系统提示词，对话历史持久保存，支持流式 Markdown 回复，工具调用过程可见
 
-![Agentic Inbox 网页界面截图](./demo_app.png)
+![网页界面截图](./demo_app.png)
 
 *网页界面截图为上游英文版。想进一步了解 Cloudflare Email Service，以及如何配合 Agents SDK、MCP 和 Wrangler CLI 使用，可以看这篇博客：[Email for Agents](https://blog.cloudflare.com/email-for-agents/)。*
 
@@ -41,7 +41,7 @@ https://github.com/cloudflare/agentic-inbox/issues/4#issuecomment-4269118513
 
 1. 部署到 Cloudflare。部署流程会自动创建 R2、Durable Objects 和 Workers AI，并提示你填写 **DOMAINS**，也就是用来收信的域名（yourdomain.com，对应 email@yourdomain.com）。多个域名用英文逗号分隔。
 
-     [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/bovachen/agentic-inbox)
+     [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/bovachen/free-domain-email)
 
 2. **配置 Cloudflare Access**：在 Worker 的 Settings > Domains & Routes 中开启[一键 Cloudflare Access](https://developers.cloudflare.com/changelog/post/2025-10-03-one-click-access-for-workers/)。弹窗里会显示 `POLICY_AUD` 和 `TEAM_DOMAIN` 的值。`TEAM_DOMAIN` 可以是 Access 团队地址，也可以是完整的 `.../cdn-cgi/access/certs` 地址。**这两个值必须设置为 Worker 的 secret。**
 3. **设置 Email Routing**：在 Cloudflare 控制台进入你的域名 > Email Routing，创建一条转发到这个 Worker 的 catch-all 规则。
@@ -83,9 +83,11 @@ npm run dev
 ### 配置
 
 1. 在 `wrangler.jsonc` 中设置你的域名
-2. 创建名为 `agentic-inbox` 的 R2 存储桶：`wrangler r2 bucket create agentic-inbox`
+2. 创建名为 `free-domain-email` 的 R2 存储桶：`wrangler r2 bucket create free-domain-email`
 
 如果不想把 `account_id`、自定义域名 `routes` 和真实的 `DOMAINS` 这类部署相关的值提交到 git，可以把 `wrangler.jsonc` 复制为 `wrangler.local.jsonc` 再修改副本。这个文件已加入 .gitignore，只要它存在，`npm run dev` 和 `npm run deploy` 就会用它代替 `wrangler.jsonc`。
+
+如果你之前部署过上游的 cloudflare/agentic-inbox，请在 `wrangler.local.jsonc` 里保留原来的 Worker 名和 R2 桶名（`agentic-inbox`）。改名会部署成一个新的 Worker，读不到原有的邮件。
 
 ### 命令行部署
 
@@ -100,6 +102,8 @@ npm run deploy
 - 已开启 [Email Service](https://developers.cloudflare.com/email-service/)（用于发信）
 - 已开启 [Workers AI](https://developers.cloudflare.com/workers-ai/)（AI 助手需要）
 - 部署或共享的环境已配置 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)（生产环境必需）
+
+**费用**：收信（Email Routing）、Workers、Durable Objects、R2 和 Cloudflare Access 都可以在 Cloudflare 免费计划内使用，所以收信、多域名、任意前缀、Telegram 通知和按钮操作都是免费的，只需要自备域名。AI 助手使用的 Workers AI 在免费计划下有每日额度。向任意地址发信（包括在网页或 Telegram 里回复外部发件人）需要 [Workers Paid 计划](https://developers.cloudflare.com/email-service/platform/pricing/)，每月含 3,000 封，超出后每千封 0.35 美元；发给账户里已验证的目标地址不收费。
 
 按照设计，任何通过了共享 Cloudflare Access 策略的用户都能访问本应用中的所有邮箱，包括位于 `/mcp` 的 MCP 服务器：通过 MCP 连接的外部 AI 工具（Claude Code、Cursor 等）只要传入 `mailboxId` 参数，就能操作任意邮箱。应用没有按邮箱划分的权限控制，Cloudflare Access 策略是唯一的信任边界。
 

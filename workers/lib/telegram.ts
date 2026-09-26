@@ -170,7 +170,7 @@ export async function sendTelegramTest(settings: TelegramSettings): Promise<void
 	}
 	await telegramApi(settings.botToken, "sendMessage", {
 		chat_id: settings.chatId,
-		text: "Agentic Inbox 通知已接通。之后有新邮件会发到这里。",
+		text: "free-domain-email 通知已接通。之后有新邮件会发到这里。",
 	});
 }
 

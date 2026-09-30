@@ -270,6 +270,14 @@ export async function getTelegramMessageRef(
 	return (await obj.json()) as TelegramMessageRef;
 }
 
+export async function deleteTelegramMessageRef(
+	bucket: R2Bucket,
+	chatId: string,
+	messageId: number | string,
+): Promise<void> {
+	await bucket.delete(messageRefKey(chatId, messageId));
+}
+
 /** Live state of the email a notification refers to; drives which buttons are shown. */
 export interface EmailStatus {
 	folder: string;

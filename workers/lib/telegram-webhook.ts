@@ -32,6 +32,7 @@ import {
 import type { EmailFull } from "./schemas";
 import {
 	buildNotificationKeyboard,
+	deleteTelegramMessageRef,
 	getTelegramMessageRef,
 	getTelegramSettings,
 	setTelegramSettings,
@@ -184,6 +185,28 @@ async function handleCallback(env: Env, settings: TelegramSettings, query: TgCal
 		await refresh();
 		return answer(settings, query.id, okText);
 	};
+	// One tap clears both places: the email goes to trash (still recoverable
+	// in the web UI) and the notification leaves the chat. Telegram only lets
+	// bots delete messages younger than 48 hours; older ones keep the
+	// "deleted" keyboard with an undo button instead.
+	const trashAndDismiss = async () => {
+		const ok = await stub.moveEmail(ref.emailId, Folders.TRASH);
+		if (!ok) return answer(settings, query.id, "删除失败", true);
+		if (query.message) {
+			try {
+				await telegramApi(settings.botToken, "deleteMessage", {
+					chat_id: query.message.chat.id,
+					message_id: query.message.message_id,
+				});
+				await deleteTelegramMessageRef(env.BUCKET, settings.chatId, query.message.message_id);
+				return answer(settings, query.id, "已删除，邮件可在网页的废纸篓里恢复");
+			} catch (e) {
+				console.warn("deleteMessage failed:", (e as Error).message);
+			}
+		}
+		await refresh();
+		return answer(settings, query.id, "已移入废纸篓（超过 48 小时的通知无法删除）");
+	};
 	const flag = async (patch: { read?: boolean; starred?: boolean }, okText: string) => {
 		const updated = await stub.updateEmail(ref.emailId, patch);
 		if (!updated) return answer(settings, query.id, "邮件不存在", true);
@@ -195,7 +218,7 @@ async function handleCallback(env: Env, settings: TelegramSettings, query: TgCal
 		case "spam":
 			return move(Folders.SPAM, "已标为垃圾邮件");
 		case "trash":
-			return move(Folders.TRASH, "已移入废纸篓");
+			return trashAndDismiss();
 		case "inbox":
 			return move(Folders.INBOX, "已移回收件箱");
 		case "read":

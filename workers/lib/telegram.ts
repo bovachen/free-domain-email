@@ -292,9 +292,16 @@ export function buildNotificationKeyboard(
 	status: EmailStatus,
 ) {
 	const openUrl = `${settings.inboxBaseUrl}/mail/mailbox/${encodeURIComponent(ref.mailboxId)}/emails/${encodeURIComponent(status.folder)}?email=${encodeURIComponent(ref.emailId)}`;
-	const rows: { text: string; url?: string; callback_data?: string; copy_text?: { text: string } }[][] = [];
+	const rows: {
+		text: string;
+		url?: string;
+		callback_data?: string;
+		copy_text?: { text: string };
+		style?: "danger" | "success" | "primary";
+	}[][] = [];
 	if (ref.code) {
-		rows.push([{ text: `📋 复制验证码 ${ref.code}`, copy_text: { text: ref.code } }]);
+		// "danger" renders red, so the copy button stands out from the rest.
+		rows.push([{ text: `📋 复制验证码 ${ref.code}`, copy_text: { text: ref.code }, style: "danger" }]);
 	}
 	rows.push([{ text: "打开 Inbox 回复", url: openUrl }]);
 

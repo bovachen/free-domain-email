@@ -252,6 +252,8 @@ export interface TelegramMessageRef {
 	emailId: string;
 	sender: string;
 	subject: string;
+	/** Verification code detected in the email, shown as a copy button. */
+	code?: string;
 }
 
 function messageRefKey(chatId: string, messageId: number | string): string {
@@ -286,13 +288,15 @@ export const NEW_EMAIL_STATUS: EmailStatus = { folder: "inbox", read: false, sta
  */
 export function buildNotificationKeyboard(
 	settings: Pick<TelegramSettings, "inboxBaseUrl" | "webhookSecret" | "polling">,
-	ref: Pick<TelegramMessageRef, "mailboxId" | "emailId" | "sender">,
+	ref: Pick<TelegramMessageRef, "mailboxId" | "emailId" | "sender" | "code">,
 	status: EmailStatus,
 ) {
 	const openUrl = `${settings.inboxBaseUrl}/mail/mailbox/${encodeURIComponent(ref.mailboxId)}/emails/${encodeURIComponent(status.folder)}?email=${encodeURIComponent(ref.emailId)}`;
-	const rows: { text: string; url?: string; callback_data?: string }[][] = [
-		[{ text: "打开 Inbox 回复", url: openUrl }],
-	];
+	const rows: { text: string; url?: string; callback_data?: string; copy_text?: { text: string } }[][] = [];
+	if (ref.code) {
+		rows.push([{ text: `📋 复制验证码 ${ref.code}`, copy_text: { text: ref.code } }]);
+	}
+	rows.push([{ text: "打开 Inbox 回复", url: openUrl }]);
 
 	if (!isTelegramInteractive(settings)) {
 		// Neither webhook nor polling: fall back to the browser-based report page.
@@ -359,11 +363,9 @@ export async function notifyNewEmail(
 
 	const snippet = previewText(params.body);
 	const code = extractVerificationCode(params.subject, params.body);
-	// With a code, lead with it so the phone's lock-screen preview shows it,
-	// then repeat it as a <pre> block: a boxed line with a copy button.
-	const lines = code
-		? [`<b>🔑 验证码 ${escapeHtml(code)}</b>`, `<pre>${escapeHtml(code)}</pre>`]
-		: ["<b>📬 新邮件</b>", ""];
+	// With a code, lead with it so the phone's lock-screen preview shows it;
+	// the keyboard adds a one-tap copy button for it.
+	const lines = [code ? `<b>🔑 验证码 ${escapeHtml(code)}</b>` : "<b>📬 新邮件</b>", ""];
 	lines.push(
 		`<b>收件</b> ${escapeHtml(params.mailboxId)}`,
 		`<b>发件</b> ${escapeHtml(params.sender || "（未知）")}`,
@@ -384,6 +386,7 @@ export async function notifyNewEmail(
 		emailId: params.emailId,
 		sender: params.sender,
 		subject: params.subject,
+		...(code ? { code } : {}),
 	};
 
 	const sent = (await telegramApi(settings.botToken, "sendMessage", {

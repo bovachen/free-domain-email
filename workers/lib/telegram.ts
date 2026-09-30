@@ -359,11 +359,11 @@ export async function notifyNewEmail(
 
 	const snippet = previewText(params.body);
 	const code = extractVerificationCode(params.subject, params.body);
-	const lines = ["<b>📬 新邮件</b>", ""];
-	if (code) {
-		// <code> renders monospace and copies on tap in Telegram.
-		lines.push(`🔑 <b>验证码</b>  <code>${escapeHtml(code)}</code>`, "");
-	}
+	// With a code, lead with it so the phone's lock-screen preview shows it,
+	// then repeat it as a <pre> block: a boxed line with a copy button.
+	const lines = code
+		? [`<b>🔑 验证码 ${escapeHtml(code)}</b>`, `<pre>${escapeHtml(code)}</pre>`]
+		: ["<b>📬 新邮件</b>", ""];
 	lines.push(
 		`<b>收件</b> ${escapeHtml(params.mailboxId)}`,
 		`<b>发件</b> ${escapeHtml(params.sender || "（未知）")}`,

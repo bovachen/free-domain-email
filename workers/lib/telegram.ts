@@ -70,8 +70,9 @@ function escapeHtml(text: string): string {
 		.replace(/>/g, "&gt;");
 }
 
-function previewText(htmlOrText: string, max = 280): string {
-	const plain = htmlOrText
+/** Email body (HTML or plain text) as a single line of readable text. */
+function toPlainText(htmlOrText: string): string {
+	return htmlOrText
 		.replace(/<style[\s\S]*?<\/style>/gi, " ")
 		.replace(/<script[\s\S]*?<\/script>/gi, " ")
 		.replace(/<br\s*\/?>/gi, "\n")
@@ -81,10 +82,45 @@ function previewText(htmlOrText: string, max = 280): string {
 		.replace(/&amp;/gi, "&")
 		.replace(/&lt;/gi, "<")
 		.replace(/&gt;/gi, ">")
+		// Tracking links swamp short notifications; the full email is one tap away.
+		.replace(/<?\b(?:https?:\/\/|www\.)[^\s<>"')\]]+>?/gi, " ")
+		.replace(/[(\[]\s*[)\]]/g, " ")
 		.replace(/\s+/g, " ")
 		.trim();
+}
+
+function previewText(htmlOrText: string, max = 280): string {
+	const plain = toPlainText(htmlOrText);
 	if (plain.length <= max) return plain;
 	return `${plain.slice(0, max).trim()}…`;
+}
+
+const CODE_KEYWORD =
+	/验证码|校验码|动态码|确认码|登录码|安全码|驗證碼|認證碼|確認碼|\b(?:verification|verify|security|confirmation|confirm|login|log-in|sign-in|signin|access|auth(?:entication)?|one[- ]time|2fa|mfa)\b[^.\n]{0,30}?\b(?:code|passcode|pin)\b|\b(?:otp|passcode)\b|\bcode\b/gi;
+const CODE_TOKEN = /(?<![\w-])(\d{3}[ -]\d{3}|\d{4,8}|(?=[A-Z0-9]{0,7}\d)(?=[A-Z0-9]{0,7}[A-Z])[A-Z0-9]{5,8})(?![\w-])/g;
+
+function isLikelyYear(token: string): boolean {
+	return /^(19|20)\d{2}$/.test(token);
+}
+
+/**
+ * Pull a one-time code (e.g. "252416") out of a verification email so the
+ * notification can show it up front. Looks for a short number or code just
+ * after a keyword like "verification code" / "验证码"; returns null if none.
+ */
+export function extractVerificationCode(subject: string, body: string): string | null {
+	for (const text of [subject, toPlainText(body)]) {
+		for (const kw of text.matchAll(CODE_KEYWORD)) {
+			const start = (kw.index ?? 0) + kw[0].length;
+			const window = text.slice(start, start + 120);
+			for (const m of window.matchAll(CODE_TOKEN)) {
+				const token = m[1];
+				if (isLikelyYear(token)) continue;
+				return token.replace(/[ -]/g, "");
+			}
+		}
+	}
+	return null;
 }
 
 export async function getTelegramSettings(bucket: R2Bucket): Promise<TelegramSettings> {
@@ -322,13 +358,17 @@ export async function notifyNewEmail(
 	if (!settings.enabled || !settings.botToken || !settings.chatId) return;
 
 	const snippet = previewText(params.body);
-	const lines = [
-		"<b>📬 新邮件</b>",
-		"",
+	const code = extractVerificationCode(params.subject, params.body);
+	const lines = ["<b>📬 新邮件</b>", ""];
+	if (code) {
+		// <code> renders monospace and copies on tap in Telegram.
+		lines.push(`🔑 <b>验证码</b>  <code>${escapeHtml(code)}</code>`, "");
+	}
+	lines.push(
 		`<b>收件</b> ${escapeHtml(params.mailboxId)}`,
 		`<b>发件</b> ${escapeHtml(params.sender || "（未知）")}`,
 		`<b>主题</b> ${escapeHtml(params.subject || "（无主题）")}`,
-	];
+	);
 	if (params.attachmentCount > 0) {
 		lines.push(`<b>附件</b> ${params.attachmentCount} 个`);
 	}

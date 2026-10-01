@@ -12,13 +12,12 @@ import { useMailboxes } from "~/queries/mailboxes";
 import api, { ApiError, type CloudflareSettings, type DomainSetupResult } from "~/services/api";
 
 // Pre-fills the Cloudflare "Create API token" page with the permissions the
-// setup needs. Unknown keys are dropped silently by the dashboard, so the
-// dialog also lists the permissions in plain text.
+// setup needs. Email Routing Rules has no documented short key (unknown keys
+// are dropped silently), so the dialog tells the user to add it by hand.
 const TOKEN_PERMISSIONS = [
 	{ key: "zone", type: "read" },
 	{ key: "zone_settings", type: "edit" },
 	{ key: "dns", type: "edit" },
-	{ key: "email_routing_rules", type: "edit" },
 ];
 const TOKEN_TEMPLATE_URL =
 	"https://dash.cloudflare.com/profile/api-tokens?" +
@@ -350,14 +349,14 @@ export default function DomainsDialog({
 								打开 Cloudflare 创建 Token <ArrowSquareOutIcon size={14} />
 							</a>
 							<div className="text-xs text-kumo-subtle space-y-1">
-								<p>需要的权限（链接已预填，缺少的请手动补上）：</p>
+								<p>链接会预填前 3 项权限，第 4 项需要手动添加（左边选「区域」，右边搜「电子邮件路由」）：</p>
 								<ul className="list-disc pl-5">
-									<li>Zone → Zone → Read</li>
-									<li>Zone → Zone Settings → Edit</li>
-									<li>Zone → DNS → Edit</li>
-									<li>Zone → Email Routing Rules → Edit</li>
+									<li>区域 → 区域 → 读取</li>
+									<li>区域 → 区域设置 → 编辑（开启 Email Routing 需要这一项，不能选读取）</li>
+									<li>区域 → DNS → 编辑</li>
+									<li>区域 → 电子邮件路由规则（Email Routing Rules）→ 编辑</li>
 								</ul>
-								<p>Zone Resources 选 All zones（或只选要添加的域名）。</p>
+								<p>区域资源选「包括 → 所有区域」（或只选要添加的域名）。</p>
 							</div>
 							<div className="flex gap-2">
 								<input
@@ -422,7 +421,7 @@ export default function DomainsDialog({
 							)}
 							{zonesQuery.isSuccess && zones.length === 0 && (
 								<p className="text-sm text-kumo-subtle">
-									没有可添加的域名：这个 Token 能看到的域名都已添加，或者 Zone Resources 没有包含其他域名。
+									没有可添加的域名：这个 Token 能看到的域名都已添加，或者 Token 的区域资源没有包含其他域名。
 								</p>
 							)}
 

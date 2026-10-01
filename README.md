@@ -193,11 +193,11 @@ npm run deploy
 
 部署完成后再加域名，不用改 `DOMAINS`、也不用重新部署：在侧栏点击 **域名管理**。
 
-1. 第一次使用时，点击对话框里的 **打开 Cloudflare 创建 Token**，链接会预填好权限。确认 Token 有下面 4 项权限（缺少的手动补上），Zone Resources 选 All zones，创建后把 Token 粘贴回对话框保存：
-   - Zone → Zone → Read
-   - Zone → Zone Settings → Edit
-   - Zone → DNS → Edit
-   - Zone → Email Routing Rules → Edit
+1. 第一次使用时，点击对话框里的 **打开 Cloudflare 创建 Token**，链接会预填前 3 项权限。第 4 项需要手动添加：左边选「区域」，右边搜「电子邮件路由」。区域资源选「包括 → 所有区域」，创建后把 Token 粘贴回对话框保存。4 项权限都是「区域」级别，不是「帐户」：
+   - 区域 → 区域 → 读取
+   - 区域 → 区域设置 → 编辑（开启 Email Routing 需要这一项，不能选读取）
+   - 区域 → DNS → 编辑
+   - 区域 → 电子邮件路由规则（Email Routing Rules）→ 编辑
 2. 「从 Cloudflare 添加」下会列出这个 Cloudflare 账户里还没添加的域名。在要加的域名旁点击 **添加**，会自动完成：
    - 开启 Email Routing 并添加收信用的 MX/SPF 记录（相当于第 1 步）
    - 把 Catch-all 规则设为发送到这个 Worker（相当于第 4 步；Worker 名从已有域名的 Catch-all 规则里读取）

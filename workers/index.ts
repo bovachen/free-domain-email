@@ -2,6 +2,7 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { getAgentByName } from "agents";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import PostalMime from "postal-mime";
@@ -728,11 +729,15 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 		return;
 	}
 
-	const agentStub = env.EMAIL_AGENT.get(env.EMAIL_AGENT.idFromName(mailboxId));
-	ctx.waitUntil(agentStub.fetch(new Request("https://agents/onNewEmail", {
-		method: "POST", headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ mailboxId, emailId: messageId, sender: senderAddress, subject: parsedEmail.subject || "", threadId }),
-	})).catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
+	// getAgentByName sets the agent's name; a plain stub only works for agents
+	// the web UI has already opened, so new mailboxes would get no draft.
+	ctx.waitUntil(getAgentByName(env.EMAIL_AGENT, mailboxId)
+		.then((agentStub) => agentStub.fetch(new Request("https://agents/onNewEmail", {
+			method: "POST", headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ mailboxId, emailId: messageId, sender: senderAddress, subject: parsedEmail.subject || "", threadId }),
+		})))
+		.then(async (res) => { if (!res.ok) console.error("Auto-draft trigger failed:", res.status, await res.text()); })
+		.catch((e) => console.error("Auto-draft trigger failed:", (e as Error).message)));
 
 	ctx.waitUntil(notifyNewEmail(env.BUCKET, {
 		mailboxId,

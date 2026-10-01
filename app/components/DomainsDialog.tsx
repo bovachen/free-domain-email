@@ -12,12 +12,14 @@ import { useMailboxes } from "~/queries/mailboxes";
 import api, { ApiError, type CloudflareSettings, type DomainSetupResult } from "~/services/api";
 
 // Pre-fills the Cloudflare "Create API token" page with the permissions the
-// setup needs. Email Routing Rules has no documented short key (unknown keys
-// are dropped silently), so the dialog tells the user to add it by hand.
+// setup needs. Cloudflare does not document the Email Routing key;
+// "email_routing_rule" (singular) is what other Email Routing tools use.
+// Unknown keys are dropped silently, so the dialog still lists all four.
 const TOKEN_PERMISSIONS = [
 	{ key: "zone", type: "read" },
 	{ key: "zone_settings", type: "edit" },
 	{ key: "dns", type: "edit" },
+	{ key: "email_routing_rule", type: "edit" },
 ];
 const TOKEN_TEMPLATE_URL =
 	"https://dash.cloudflare.com/profile/api-tokens?" +
@@ -349,7 +351,7 @@ export default function DomainsDialog({
 								打开 Cloudflare 创建 Token <ArrowSquareOutIcon size={14} />
 							</a>
 							<div className="text-xs text-kumo-subtle space-y-1">
-								<p>链接会预填前 3 项权限，第 4 项需要手动添加（左边选「区域」，右边搜「电子邮件路由」）：</p>
+								<p>链接会预填下面 4 项权限，请核对一下（缺少的手动添加：左边选「区域」，右边搜对应名称）：</p>
 								<ul className="list-disc pl-5">
 									<li>区域 → 区域 → 读取</li>
 									<li>区域 → 区域设置 → 编辑（开启 Email Routing 需要这一项，不能选读取）</li>

@@ -10,6 +10,7 @@ import {
 	FileIcon,
 	FolderIcon,
 	GearSixIcon,
+	GlobeIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
 	PlusIcon,
@@ -40,6 +41,7 @@ import {
 	useWildcardSettings,
 } from "~/queries/mailboxes";
 import api from "~/services/api";
+import DomainsDialog from "./DomainsDialog";
 
 const FOLDER_ICONS: Record<string, React.ReactNode> = {
 	[Folders.INBOX]: <TrayIcon size={18} weight="regular" />,
@@ -122,6 +124,7 @@ export default function Sidebar() {
 	const [newPrefix, setNewPrefix] = useState("");
 	const [selectedDomain, setSelectedDomain] = useState(domains[0] || "");
 	const [wildcardOpen, setWildcardOpen] = useState(false);
+	const [domainsOpen, setDomainsOpen] = useState(false);
 	const [telegramOpen, setTelegramOpen] = useState(false);
 	const [botToken, setBotToken] = useState("");
 	const [chatId, setChatId] = useState("");
@@ -404,6 +407,15 @@ export default function Sidebar() {
 			<div className="border-t border-kumo-line p-2 space-y-1">
 				<button
 					type="button"
+					onClick={() => setDomainsOpen(true)}
+					className="flex items-center gap-2 w-full px-3 py-2 text-sm text-kumo-strong hover:bg-kumo-tint rounded-md"
+				>
+					<GlobeIcon size={16} />
+					<span className="flex-1 text-left">域名管理</span>
+					<span className="text-xs text-kumo-subtle">{domains.length}</span>
+				</button>
+				<button
+					type="button"
 					onClick={() => setWildcardOpen((v) => !v)}
 					className="flex items-center gap-2 w-full px-3 py-2 text-sm text-kumo-strong hover:bg-kumo-tint rounded-md"
 				>
@@ -611,6 +623,8 @@ export default function Sidebar() {
 					</NavLink>
 				)}
 			</div>
+
+			<DomainsDialog open={domainsOpen} onOpenChange={setDomainsOpen} domains={domains} />
 
 			<Dialog.Root open={isCreateMailboxOpen} onOpenChange={setIsCreateMailboxOpen}>
 				<Dialog size="sm" className="p-6">

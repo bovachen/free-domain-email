@@ -7,4 +7,8 @@ export interface Env extends Cloudflare.Env {
 	TEAM_DOMAIN: string;
 	/** Optional: send outbound mail through Resend instead of the `send_email` binding. */
 	RESEND_API_KEY?: string;
+	/** Optional: Cloudflare API token for "添加域名"; wins over a token saved in the web UI. */
+	CLOUDFLARE_API_TOKEN?: string;
+	/** Optional: catch-all target when no existing domain already routes to this Worker. */
+	WORKER_NAME?: string;
 }

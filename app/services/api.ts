@@ -105,6 +105,33 @@ export interface TelegramSettings {
 	lastPollError?: string;
 }
 
+export interface CloudflareSettings {
+	tokenConfigured: boolean;
+	tokenSource: "env" | "saved" | null;
+	resendConfigured: boolean;
+}
+
+export interface CloudflareZone {
+	id: string;
+	name: string;
+	status: string;
+	accountName: string;
+	configured: boolean;
+}
+
+export interface DomainSetupResult {
+	domain: string;
+	steps: { step: string; ok: boolean; message: string }[];
+}
+
+export interface DomainPurgeProgress {
+	done: boolean;
+	cursor: string | null;
+	mailboxesDeleted: number;
+	mailboxesRemaining: number;
+	telegramRefsDeleted: number;
+}
+
 // ---------- API client ----------
 
 const api = {
@@ -114,6 +141,16 @@ const api = {
 	getWildcardSettings: () => get<Record<string, boolean>>("/api/v1/settings/wildcard"),
 	updateWildcardSettings: (patch: Record<string, boolean>) =>
 		put<Record<string, boolean>>("/api/v1/settings/wildcard", patch),
+	getCloudflareSettings: () => get<CloudflareSettings>("/api/v1/settings/cloudflare"),
+	saveCloudflareToken: (apiToken: string) =>
+		put<CloudflareSettings>("/api/v1/settings/cloudflare", { apiToken }),
+	listAvailableDomains: () => get<{ zones: CloudflareZone[] }>("/api/v1/domains/available"),
+	setupDomain: (body: { zoneId: string; replaceMx?: boolean; resend?: boolean }) =>
+		post<DomainSetupResult>("/api/v1/domains", body),
+	removeDomain: (domain: string, body: { cloudflare?: boolean; resend?: boolean }) =>
+		post<DomainSetupResult>(`/api/v1/domains/${encodeURIComponent(domain)}/remove`, body),
+	purgeDomain: (domain: string, cursor: string | null) =>
+		post<DomainPurgeProgress>(`/api/v1/domains/${encodeURIComponent(domain)}/purge`, { cursor }),
 	getTelegramSettings: () => get<TelegramSettings>("/api/v1/settings/telegram"),
 	updateTelegramSettings: (patch: {
 		enabled?: boolean;

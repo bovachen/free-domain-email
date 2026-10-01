@@ -560,6 +560,30 @@ export class MailboxDO extends DurableObject<Env> {
 		return emailAttachments;
 	}
 
+	/**
+	 * Deletes every email, folder and attachment of this mailbox: the R2
+	 * attachment blobs first, then all Durable Object storage. The instance
+	 * is reset afterwards so a later call starts from an empty, migrated DB.
+	 */
+	async purge(): Promise<{ attachments: number }> {
+		const rows = this.db
+			.select({
+				id: schema.attachments.id,
+				email_id: schema.attachments.email_id,
+				filename: schema.attachments.filename,
+			})
+			.from(schema.attachments)
+			.all();
+		const keys = rows.map((r) => `attachments/${r.email_id}/${r.id}/${r.filename}`);
+		for (let i = 0; i < keys.length; i += 1000) {
+			await this.env.BUCKET.delete(keys.slice(i, i + 1000));
+		}
+		await this.ctx.storage.deleteAlarm();
+		await this.ctx.storage.deleteAll();
+		setTimeout(() => this.ctx.abort("purged"), 0);
+		return { attachments: keys.length };
+	}
+
 	async getAttachment(id: string) {
 		return (
 			this.db

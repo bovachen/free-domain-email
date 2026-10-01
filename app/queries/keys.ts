@@ -26,6 +26,8 @@ export const queryKeys = {
 	config: ["config"] as const,
 	wildcard: ["wildcard"] as const,
 	telegram: ["telegram"] as const,
+	cloudflare: ["cloudflare"] as const,
+	availableDomains: ["available-domains"] as const,
 	blacklist: ["blacklist"] as const,
 	unified: {
 		emails: (params: Record<string, string>) => ["unified-emails", params] as const,

@@ -5,18 +5,69 @@
 import type { Env } from "../types";
 
 const WILDCARD_KEY = "settings/wildcard.json";
+const DOMAINS_KEY = "settings/domains.json";
 
 export type WildcardSettings = Record<string, boolean>;
 
-export function configuredDomains(env: Env): string[] {
+/**
+ * Domain changes made in the web UI. `added` extends the DOMAINS var;
+ * `removed` hides DOMAINS entries without a redeploy.
+ */
+interface DomainOverrides {
+	added: string[];
+	removed: string[];
+}
+
+function envDomains(env: Env): string[] {
 	return (env.DOMAINS || "")
 		.split(",")
 		.map((d) => d.trim().toLowerCase())
 		.filter(Boolean);
 }
 
+async function getOverrides(env: Env): Promise<DomainOverrides> {
+	const obj = await env.BUCKET.get(DOMAINS_KEY);
+	const stored = obj ? ((await obj.json()) as Partial<DomainOverrides>) : {};
+	return { added: stored.added ?? [], removed: stored.removed ?? [] };
+}
+
+export async function addDomain(env: Env, domain: string): Promise<void> {
+	const d = domain.trim().toLowerCase();
+	const { added, removed } = await getOverrides(env);
+	const next: DomainOverrides = {
+		added: envDomains(env).includes(d) || added.includes(d) ? added : [...added, d],
+		removed: removed.filter((r) => r !== d),
+	};
+	await env.BUCKET.put(DOMAINS_KEY, JSON.stringify(next));
+}
+
+/** Stops accepting mail for the domain and drops its wildcard setting. */
+export async function removeDomain(env: Env, domain: string): Promise<void> {
+	const d = domain.trim().toLowerCase();
+	const { added, removed } = await getOverrides(env);
+	const next: DomainOverrides = {
+		added: added.filter((a) => a !== d),
+		removed: envDomains(env).includes(d) && !removed.includes(d) ? [...removed, d] : removed,
+	};
+	await env.BUCKET.put(DOMAINS_KEY, JSON.stringify(next));
+
+	const obj = await env.BUCKET.get(WILDCARD_KEY);
+	if (obj) {
+		const stored = (await obj.json()) as WildcardSettings;
+		delete stored[d];
+		await env.BUCKET.put(WILDCARD_KEY, JSON.stringify(stored));
+	}
+}
+
+/** DOMAINS var plus domains added from the web UI, minus those removed there. */
+export async function configuredDomains(env: Env): Promise<string[]> {
+	const { added, removed } = await getOverrides(env);
+	const fromEnv = envDomains(env).filter((d) => !removed.includes(d));
+	return [...fromEnv, ...added.filter((d) => !fromEnv.includes(d))];
+}
+
 export async function getWildcardSettings(env: Env): Promise<WildcardSettings> {
-	const domains = configuredDomains(env);
+	const domains = await configuredDomains(env);
 	const obj = await env.BUCKET.get(WILDCARD_KEY);
 	const stored = obj ? ((await obj.json()) as WildcardSettings) : {};
 	const result: WildcardSettings = {};
@@ -31,7 +82,7 @@ export async function setWildcardSettings(
 	patch: WildcardSettings,
 ): Promise<WildcardSettings> {
 	const current = await getWildcardSettings(env);
-	const domains = new Set(configuredDomains(env));
+	const domains = new Set(await configuredDomains(env));
 	for (const [domain, enabled] of Object.entries(patch)) {
 		const key = domain.trim().toLowerCase();
 		if (!domains.has(key)) continue;
@@ -43,9 +94,8 @@ export async function setWildcardSettings(
 
 export async function isWildcardEnabled(env: Env, domain: string): Promise<boolean> {
 	const d = domain.toLowerCase();
-	if (!configuredDomains(env).includes(d)) return false;
 	const settings = await getWildcardSettings(env);
-	return settings[d] !== false;
+	return d in settings && settings[d] !== false;
 }
 
 export async function ensureMailbox(env: Env, email: string): Promise<void> {

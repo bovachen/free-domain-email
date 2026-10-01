@@ -189,6 +189,33 @@ npm run deploy
 
 **可选的即时模式**：点击 **连接 Webhook**，把 `https://<你的收件箱地址>/api/telegram/webhook` 注册到 Telegram，并在 Cloudflare Zero Trust 中为这个路径单独添加一个 Access 应用，策略设为对 *Everyone* **Bypass**。Telegram 的服务器无法登录，所以 Worker 用 Telegram 回传的 secret token（`X-Telegram-Bot-Api-Secret-Token`）验证这个路径。注册 Webhook 后轮询会自动暂停。
 
+### 之后添加或移除域名（网页一键配置）
+
+部署完成后再加域名，不用改 `DOMAINS`、也不用重新部署：在侧栏点击 **域名管理**。
+
+1. 第一次使用时，点击对话框里的 **打开 Cloudflare 创建 Token**，链接会预填好权限。确认 Token 有下面 4 项权限（缺少的手动补上），Zone Resources 选 All zones，创建后把 Token 粘贴回对话框保存：
+   - Zone → Zone → Read
+   - Zone → Zone Settings → Edit
+   - Zone → DNS → Edit
+   - Zone → Email Routing Rules → Edit
+2. 「从 Cloudflare 添加」下会列出这个 Cloudflare 账户里还没添加的域名。在要加的域名旁点击 **添加**，会自动完成：
+   - 开启 Email Routing 并添加收信用的 MX/SPF 记录（相当于第 1 步）
+   - 把 Catch-all 规则设为发送到这个 Worker（相当于第 4 步；Worker 名从已有域名的 Catch-all 规则里读取）
+   - 把域名加入域名列表，通配地址默认开启
+   - 如果设置了 `RESEND_API_KEY` 并勾选了 Resend 选项：在 Resend 添加域名、写入发信 DNS 记录并开始验证（相当于第 5 步方式 A）。这一步要求 Key 是 **Full access**；只有发信权限的 Key 会提示你去 Resend 后台手动添加，不影响收信
+3. 如果这个域名已经有别的 MX 记录（比如在用企业邮箱），会先列出这些记录让你确认，确认后才会删除并改用 Cloudflare 收信。
+
+**移除域名**：在「已添加的域名」里点击 **移除**，输入域名确认。会做这些事：
+
+- 把域名移出列表，立即停止接收它的邮件。`DOMAINS` 里配置的域名也能移除，不用重新部署；之后想加回来，在「从 Cloudflare 添加」里重新添加即可
+- **永久删除**这个域名下的所有邮箱，包括邮件、文件夹、R2 里的附件、AI 助手的对话记录，以及指向这些邮件的 Telegram 通知记录（Telegram 里已经发出的消息不会被删）。邮箱多时会分批删除，对话框会显示进度
+- 可选：清理 Cloudflare 设置（需要已保存 API Token）：停用转给这个 Worker 的 Catch-all 和路由规则，关闭 Email Routing 并删除收信用的 MX/SPF 记录。手动设置的、转发到其他地方的规则不会动
+- 可选：从 Resend 删除这个域名，并删除它的发信 DNS 记录
+
+删除中途失败的话，再次点击 **永久移除** 会接着清理。
+
+Token 保存在你自己的 R2 存储桶里；也可以改用 Worker 密钥 `CLOUDFLARE_API_TOKEN`，设置后优先使用密钥。如果没有任何已有域名能读出 Worker 名，会使用变量 `WORKER_NAME`，默认 `free-domain-email`。
+
 ## 常见问题
 
 **打开网页提示 `Access 令牌无效或已过期`**
@@ -202,7 +229,7 @@ npm run deploy
 **收不到邮件**
 
 - 确认第 4 步的 Catch-all 规则已启用，目标是这个 Worker
-- 确认这个域名在 `DOMAINS` 里
+- 确认这个域名在 `DOMAINS` 里，或已通过侧栏 **域名管理** 添加
 - 如果邮箱还不存在，确认侧栏 **通配地址** 里这个域名是开启的；关闭时只接收已创建的邮箱
 - 如果设置了 `EMAIL_ADDRESSES`，只有列表里的地址会被接收
 - 发件人在黑名单里的邮件会直接进入 **垃圾邮件**

@@ -20,8 +20,18 @@ import {
 	ensureMailbox,
 	getWildcardSettings,
 	isWildcardEnabled,
+	removeDomain,
 	setWildcardSettings,
 } from "./lib/domain-settings";
+import {
+	getCloudflareSettings,
+	listAvailableZones,
+	MxConflictError,
+	saveCloudflareToken,
+	setupDomain,
+	teardownDomain,
+} from "./lib/domain-setup";
+import { purgeDomainData, purgeMailbox } from "./lib/purge";
 import {
 	addToBlacklist,
 	getBlacklist,
@@ -113,7 +123,7 @@ app.use("/api/v1/mailboxes/:mailboxId/*", requireMailbox);
 // -- Config ---------------------------------------------------------
 
 app.get("/api/v1/config", async (c) => {
-	const domains = configuredDomains(c.env);
+	const domains = await configuredDomains(c.env);
 	const emailAddresses = c.env.EMAIL_ADDRESSES ?? [];
 	const wildcard = await getWildcardSettings(c.env);
 	return c.json({ domains, emailAddresses, wildcard });
@@ -126,6 +136,73 @@ app.get("/api/v1/settings/wildcard", async (c) => {
 app.put("/api/v1/settings/wildcard", async (c) => {
 	const body = (await c.req.json()) as Record<string, boolean>;
 	return c.json(await setWildcardSettings(c.env, body));
+});
+
+app.get("/api/v1/settings/cloudflare", async (c) => {
+	return c.json({ ...(await getCloudflareSettings(c.env)), resendConfigured: Boolean(c.env.RESEND_API_KEY) });
+});
+
+app.put("/api/v1/settings/cloudflare", async (c) => {
+	const body = (await c.req.json()) as { apiToken?: string };
+	try {
+		const saved = await saveCloudflareToken(c.env, body.apiToken || "");
+		return c.json({ ...saved, resendConfigured: Boolean(c.env.RESEND_API_KEY) });
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+app.get("/api/v1/domains/available", async (c) => {
+	try {
+		return c.json({ zones: await listAvailableZones(c.env) });
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+app.post("/api/v1/domains", async (c) => {
+	const body = (await c.req.json()) as { zoneId?: string; replaceMx?: boolean; resend?: boolean };
+	if (!body.zoneId) return c.json({ error: "缺少 zoneId" }, 400);
+	try {
+		return c.json(await setupDomain(c.env, {
+			zoneId: body.zoneId,
+			replaceMx: body.replaceMx === true,
+			resend: body.resend === true,
+		}));
+	} catch (e) {
+		if (e instanceof MxConflictError) {
+			return c.json({ error: e.message, mxConflicts: e.records }, 409);
+		}
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+// Step 1 of removal: stop accepting the domain's mail and, if asked, undo
+// the Cloudflare / Resend setup. The UI then calls /purge until done.
+app.post("/api/v1/domains/:domain/remove", async (c) => {
+	const domain = c.req.param("domain").toLowerCase();
+	const body = (await c.req.json().catch(() => ({}))) as { cloudflare?: boolean; resend?: boolean };
+	if (!(await configuredDomains(c.env)).includes(domain)) return c.json({ error: "域名列表里没有这个域名" }, 404);
+	await removeDomain(c.env, domain);
+	const steps = [
+		{ step: "移出域名列表", ok: true, message: "不再接收这个域名的邮件" },
+		...(await teardownDomain(c.env, domain, { cloudflare: body.cloudflare === true, resend: body.resend === true })),
+	];
+	return c.json({ domain, steps });
+});
+
+// Step 2 of removal, in batches: mailboxes (emails, attachments, AI chat) and Telegram refs.
+app.post("/api/v1/domains/:domain/purge", async (c) => {
+	const domain = c.req.param("domain").toLowerCase();
+	const body = (await c.req.json().catch(() => ({}))) as { cursor?: string | null };
+	if ((await configuredDomains(c.env)).includes(domain)) {
+		return c.json({ error: "请先移除域名，再清理数据" }, 409);
+	}
+	try {
+		return c.json(await purgeDomainData(c.env, domain, body.cursor ?? null));
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 500);
+	}
 });
 
 app.get("/api/v1/settings/telegram", async (c) => {
@@ -339,7 +416,7 @@ app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const key = `mailboxes/${mailboxId}.json`;
 	if (!(await c.env.BUCKET.head(key))) return c.json({ error: "未找到" }, 404);
-	await c.env.BUCKET.delete(key); // TODO: also delete DO data and R2 attachment blobs
+	await purgeMailbox(c.env, mailboxId);
 	return c.body(null, 204);
 });
 
@@ -569,7 +646,7 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 	const ccRecipients = (parsedEmail.cc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 	const bccRecipients = (parsedEmail.bcc || []).map((e) => e.address?.toLowerCase()).filter(Boolean) as string[];
 
-	const domains = configuredDomains(env);
+	const domains = await configuredDomains(env);
 	const domainRecipients = allRecipients.filter((addr) => {
 		const domain = addr.split("@")[1];
 		return domain && domains.includes(domain);

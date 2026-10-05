@@ -636,7 +636,7 @@ async function streamToArrayBuffer(stream: ReadableStream, streamSize: number) {
 	return result;
 }
 
-async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env: Env, ctx: ExecutionContext) {
+async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: number }, env: Env, ctx: ExecutionContext) {
 	const rawEmail = await streamToArrayBuffer(event.raw, event.rawSize);
 	const parsedEmail = await new PostalMime().parse(rawEmail);
 
@@ -652,7 +652,14 @@ async function receiveEmail(event: { raw: ReadableStream; rawSize: number }, env
 		const domain = addr.split("@")[1];
 		return domain && domains.includes(domain);
 	});
-	const candidates = domainRecipients.length > 0 ? domainRecipients : allRecipients;
+	// The envelope recipient is where Email Routing actually delivered the
+	// message. Auto-forwarded mail (e.g. from Gmail or Outlook) keeps the
+	// original To header, so only the envelope names our mailbox.
+	const envelopeTo = event.to?.toLowerCase();
+	const candidates = [
+		...(envelopeTo ? [envelopeTo] : []),
+		...(domainRecipients.length > 0 ? domainRecipients : allRecipients).filter((a) => a !== envelopeTo),
+	];
 
 	let mailboxId: string | undefined;
 	if (allowedAddresses.length > 0) {

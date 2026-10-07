@@ -9,6 +9,7 @@ import PostalMime from "postal-mime";
 import { z } from "zod";
 import { sendEmail } from "./email-sender";
 import { storeAttachments, type StoredAttachment } from "./lib/attachments";
+import { getAutoDraftSettings, setAutoDraftSettings } from "./lib/auto-draft";
 import {
 	validateSender,
 	SenderValidationError,
@@ -137,6 +138,15 @@ app.get("/api/v1/settings/wildcard", async (c) => {
 app.put("/api/v1/settings/wildcard", async (c) => {
 	const body = (await c.req.json()) as Record<string, boolean>;
 	return c.json(await setWildcardSettings(c.env, body));
+});
+
+app.get("/api/v1/settings/auto-draft", async (c) => {
+	return c.json(await getAutoDraftSettings(c.env));
+});
+
+app.put("/api/v1/settings/auto-draft", async (c) => {
+	const body = (await c.req.json()) as { enabled?: boolean };
+	return c.json(await setAutoDraftSettings(c.env, body));
 });
 
 app.get("/api/v1/settings/cloudflare", async (c) => {

@@ -13,6 +13,8 @@ export interface MailboxSettings {
 	forwarding?: { enabled: boolean; email: string };
 	signature?: SignatureSettings;
 	autoReply?: { enabled: boolean; subject: string; message: string };
+	/** AI drafts a reply to new mail; on unless set to false. */
+	autoDraft?: { enabled: boolean };
 	agentSystemPrompt?: string;
 }
 

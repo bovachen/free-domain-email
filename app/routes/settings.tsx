@@ -6,7 +6,7 @@ import { Badge, Button, Input, Loader, useKumoToastManager } from "@cloudflare/k
 import { RobotIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import { useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
+import { useAutoDraftSettings, useMailbox, useUpdateMailbox } from "~/queries/mailboxes";
 
 // Placeholder shown in the textarea when no custom prompt is set.
 // The authoritative default prompt lives in workers/agent/index.ts (DEFAULT_SYSTEM_PROMPT).
@@ -17,15 +17,18 @@ export default function SettingsRoute() {
 	const toastManager = useKumoToastManager();
 	const { data: mailbox } = useMailbox(mailboxId);
 	const updateMailboxMutation = useUpdateMailbox();
+	const { data: accountAutoDraft } = useAutoDraftSettings();
 
 	const [displayName, setDisplayName] = useState("");
 	const [agentPrompt, setAgentPrompt] = useState("");
+	const [autoDraft, setAutoDraft] = useState(true);
 	const [isSaving, setIsSaving] = useState(false);
 
 	useEffect(() => {
 		if (mailbox) {
 			setDisplayName(mailbox.settings?.fromName || mailbox.name || "");
 			setAgentPrompt(mailbox.settings?.agentSystemPrompt || "");
+			setAutoDraft(mailbox.settings?.autoDraft?.enabled !== false);
 		}
 	}, [mailbox]);
 
@@ -36,6 +39,7 @@ export default function SettingsRoute() {
 			...mailbox.settings,
 			fromName: displayName,
 			agentSystemPrompt: agentPrompt.trim() || undefined,
+			autoDraft: { enabled: autoDraft },
 		};
 		try {
 			await updateMailboxMutation.mutateAsync({ mailboxId, settings });
@@ -82,6 +86,32 @@ export default function SettingsRoute() {
 						/>
 						<Input label="邮箱地址" type="email" value={mailbox.email} disabled />
 					</div>
+				</div>
+
+				{/* Auto-draft */}
+				<div className="rounded-lg border border-kumo-line bg-kumo-base p-5">
+					<label className="flex items-start justify-between gap-4">
+						<span>
+							<span className="block text-sm font-medium text-kumo-default">
+								新邮件自动起草回复
+							</span>
+							<span className="block text-xs text-kumo-subtle mt-1">
+								AI 读信后在草稿箱写好回复，不会自动发出。通知、订阅类邮件多的邮箱可以关掉，省下 AI 用量。
+							</span>
+						</span>
+						<input
+							type="checkbox"
+							className="h-4 w-4 mt-0.5 shrink-0 accent-kumo-brand"
+							checked={autoDraft}
+							onChange={(e) => setAutoDraft(e.target.checked)}
+							aria-label="此邮箱自动起草回复"
+						/>
+					</label>
+					{accountAutoDraft?.enabled === false && (
+						<p className="text-xs text-kumo-warning mt-3">
+							侧栏「AI 自动起草」的总开关已关闭，目前所有邮箱都不会自动起草。
+						</p>
+					)}
 				</div>
 
 				{/* Agent System Prompt */}

@@ -13,6 +13,7 @@ import { createWorkersAI } from "workers-ai-provider";
 import { z } from "zod";
 import type { EmailFull, EmailMetadata } from "../lib/schemas";
 import { verifyDraft, isPromptInjection } from "../lib/ai";
+import { autoDraftEnabled } from "../lib/auto-draft";
 import {
 	getMailboxStub,
 	stripHtmlToText,
@@ -382,6 +383,9 @@ export class EmailAgent extends AIChatAgent<any> {
 		subject: string;
 		threadId: string;
 	}) {
+		// Switched off for the whole account or for this mailbox: no AI calls,
+		// and the mail doesn't count against the daily cap.
+		if (!(await autoDraftEnabled(this.env as Env, emailData.mailboxId))) return;
 		if (!(await this.takeAutoDraftSlot())) {
 			console.warn(`Auto-draft skipped: ${emailData.mailboxId} reached ${AUTO_DRAFT_DAILY_LIMIT} drafts today.`);
 			return;

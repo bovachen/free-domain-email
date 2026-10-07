@@ -30,6 +30,7 @@
 - **完整的邮件客户端**：富文本编辑、按会话归并的回复与转发、文件夹、搜索和附件；有多个邮箱时，写邮件界面可以选择 **发件人**
 - **邮箱隔离**：每个邮箱运行在独立的 [Durable Object](https://developers.cloudflare.com/durable-objects/) 中，数据存于 SQLite，附件存于 [R2](https://developers.cloudflare.com/r2/)
 - **内置 AI 助手**：基于 [Cloudflare Agents SDK](https://developers.cloudflare.com/agents/) 和 [Workers AI](https://developers.cloudflare.com/workers-ai/)，侧边面板提供 10 个邮件工具，可以阅读、搜索、起草、发送邮件以及举报垃圾邮件；新邮件到达时会自动起草回复，发送前始终需要你确认
+- **自动起草开关和上限**：侧栏的 **AI 自动起草** 是所有邮箱的总开关，每个邮箱的设置页还能单独关闭（通知、订阅类邮件多的邮箱适合关掉）。每个邮箱每天最多自动起草 30 封，超出的邮件照常收下，只是不起草，避免邮件突然变多时 AI 费用跟着上涨
 - **MCP 服务器**：Claude Code、Cursor 等 AI 工具可以通过 `/mcp` 连接并操作邮箱
 
 ## 费用与发信方式

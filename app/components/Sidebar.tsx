@@ -15,6 +15,7 @@ import {
 	PencilSimpleIcon,
 	PlusIcon,
 	ProhibitIcon,
+	RobotIcon,
 	TelegramLogoIcon,
 	TrashIcon,
 	TrayIcon,
@@ -30,12 +31,14 @@ import { useCreateFolder, useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import {
 	useAddToBlacklist,
+	useAutoDraftSettings,
 	useBlacklist,
 	useCreateMailbox,
 	useMailboxes,
 	useRemoveFromBlacklist,
 	useTelegramSettings,
 	useUnifiedFolders,
+	useUpdateAutoDraftSettings,
 	useUpdateTelegramSettings,
 	useUpdateWildcardSettings,
 	useWildcardSettings,
@@ -124,6 +127,7 @@ export default function Sidebar() {
 	const [newPrefix, setNewPrefix] = useState("");
 	const [selectedDomain, setSelectedDomain] = useState(domains[0] || "");
 	const [wildcardOpen, setWildcardOpen] = useState(false);
+	const [autoDraftOpen, setAutoDraftOpen] = useState(false);
 	const [domainsOpen, setDomainsOpen] = useState(false);
 	const [telegramOpen, setTelegramOpen] = useState(false);
 	const [botToken, setBotToken] = useState("");
@@ -132,6 +136,8 @@ export default function Sidebar() {
 	const [blacklistOpen, setBlacklistOpen] = useState(false);
 	const [blacklistAddress, setBlacklistAddress] = useState("");
 	const { data: telegram } = useTelegramSettings();
+	const { data: autoDraft } = useAutoDraftSettings();
+	const updateAutoDraft = useUpdateAutoDraftSettings();
 	const { data: blacklist } = useBlacklist();
 	const addToBlacklist = useAddToBlacklist();
 	const removeFromBlacklist = useRemoveFromBlacklist();
@@ -442,6 +448,39 @@ export default function Sidebar() {
 								/>
 							</label>
 						))}
+					</div>
+				)}
+				<button
+					type="button"
+					onClick={() => setAutoDraftOpen((v) => !v)}
+					className="flex items-center gap-2 w-full px-3 py-2 text-sm text-kumo-strong hover:bg-kumo-tint rounded-md"
+				>
+					<RobotIcon size={16} />
+					<span className="flex-1 text-left">AI 自动起草</span>
+					{autoDraft?.enabled === false && <span className="text-xs text-kumo-subtle">已关闭</span>}
+					{autoDraftOpen ? <CaretDownIcon size={12} /> : <CaretRightIcon size={12} />}
+				</button>
+				{autoDraftOpen && (
+					<div className="px-3 pb-2 space-y-2">
+						<p className="text-xs text-kumo-subtle">
+							新邮件到达时，AI 会读信并在草稿箱写好回复，不会自动发出，每个邮箱每天最多 30 封。这里是总开关；单个邮箱可以在它的设置页里另外关闭。
+						</p>
+						<label className="flex items-center justify-between gap-2 text-sm">
+							<span>所有邮箱启用</span>
+							<input
+								type="checkbox"
+								className="h-4 w-4 accent-kumo-brand"
+								checked={autoDraft?.enabled !== false}
+								disabled={!autoDraft || updateAutoDraft.isPending}
+								onChange={(e) =>
+									updateAutoDraft.mutate(
+										{ enabled: e.target.checked },
+										{ onError: () => toastManager.add({ title: "保存失败，请重试", variant: "error" }) },
+									)
+								}
+								aria-label="所有邮箱启用 AI 自动起草"
+							/>
+						</label>
 					</div>
 				)}
 				<button

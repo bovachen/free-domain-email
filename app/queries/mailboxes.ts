@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import api from "~/services/api";
+import api, { type AutoDraftSettings } from "~/services/api";
 import type { BlacklistEntry, Mailbox } from "~/types";
 import { queryKeys } from "./keys";
 
@@ -65,6 +65,23 @@ export function useUpdateWildcardSettings() {
 		onSuccess: (data) => {
 			qc.setQueryData(queryKeys.wildcard, data);
 			qc.invalidateQueries({ queryKey: queryKeys.config });
+		},
+	});
+}
+
+export function useAutoDraftSettings() {
+	return useQuery<AutoDraftSettings>({
+		queryKey: queryKeys.autoDraft,
+		queryFn: () => api.getAutoDraftSettings(),
+	});
+}
+
+export function useUpdateAutoDraftSettings() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (patch: AutoDraftSettings) => api.updateAutoDraftSettings(patch),
+		onSuccess: (data) => {
+			qc.setQueryData(queryKeys.autoDraft, data);
 		},
 	});
 }

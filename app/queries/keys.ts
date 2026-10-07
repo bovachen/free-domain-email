@@ -25,6 +25,7 @@ export const queryKeys = {
 	},
 	config: ["config"] as const,
 	wildcard: ["wildcard"] as const,
+	autoDraft: ["auto-draft"] as const,
 	telegram: ["telegram"] as const,
 	cloudflare: ["cloudflare"] as const,
 	availableDomains: ["available-domains"] as const,

@@ -105,6 +105,10 @@ export interface TelegramSettings {
 	lastPollError?: string;
 }
 
+export interface AutoDraftSettings {
+	enabled: boolean;
+}
+
 export interface CloudflareSettings {
 	tokenConfigured: boolean;
 	tokenSource: "env" | "saved" | null;
@@ -141,6 +145,9 @@ const api = {
 	getWildcardSettings: () => get<Record<string, boolean>>("/api/v1/settings/wildcard"),
 	updateWildcardSettings: (patch: Record<string, boolean>) =>
 		put<Record<string, boolean>>("/api/v1/settings/wildcard", patch),
+	getAutoDraftSettings: () => get<AutoDraftSettings>("/api/v1/settings/auto-draft"),
+	updateAutoDraftSettings: (patch: AutoDraftSettings) =>
+		put<AutoDraftSettings>("/api/v1/settings/auto-draft", patch),
 	getCloudflareSettings: () => get<CloudflareSettings>("/api/v1/settings/cloudflare"),
 	saveCloudflareToken: (apiToken: string) =>
 		put<CloudflareSettings>("/api/v1/settings/cloudflare", { apiToken }),

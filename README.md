@@ -107,6 +107,23 @@ npm run deploy
 
 > 如果你之前部署过上游的 cloudflare/agentic-inbox，请在 `wrangler.local.jsonc` 里保留原来的 Worker 名和 R2 桶名（`agentic-inbox`）。改名会部署成一个新的 Worker，读不到原有的邮件。
 
+**方式 C：推送到 GitHub 后自动部署（Workers Builds）**
+
+适合 fork 后自己改代码：每次推送到 `main`，Cloudflare 自动构建、部署你自己的配置，`wrangler.local.jsonc` 仍然不进 git。
+
+1. 先用方式 B 部署过一次（Worker、R2 桶和下面第 3 步的密钥都已就绪）。
+2. Workers 和 Pages → 你的 Worker → 设置 → 构建 → 连接，选你的仓库和 `main` 分支，关掉「启用预览构建」。
+3. 构建命令改成：
+
+   ```bash
+   printf '%s' "$WRANGLER_LOCAL_JSONC" > wrangler.local.jsonc && npm run build
+   ```
+
+   部署命令保持 `npx wrangler deploy`。
+4. 「高级设置 → 变量」里加 `WRANGLER_LOCAL_JSONC`，值填 `wrangler.local.jsonc` 的全文（去掉注释），点「加密」。
+
+构建时先用这个变量写出 `wrangler.local.jsonc`，所以部署的是你的配置。变量没配时写出的是空文件，构建会直接失败，不会把仓库里的示例配置部署上去。
+
 ### 第 3 步：开启 Cloudflare Access（必需）
 
 为了不让收件箱暴露在公网上，应用在生产环境强制要求 [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/)，没配置时会直接拒绝访问。

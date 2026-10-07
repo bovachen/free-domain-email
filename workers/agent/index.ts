@@ -281,10 +281,47 @@ function createEmailTools(env: Env, mailboxId: string) {
 	};
 }
 
+// Each auto-draft costs up to six AI calls (the injection check plus up to five
+// model steps). Capping drafts per mailbox per day keeps a flood of inbound
+// mail from turning into an open-ended AI bill; mail over the cap is still
+// delivered, it just gets no draft.
+const AUTO_DRAFT_DAILY_LIMIT = 30;
+const AUTO_DRAFT_USAGE_KEY = "auto-draft-usage";
+
+// The SDK's keepAlive() heartbeat re-arms every 30 seconds until the reply
+// that started it finishes. If the object is torn down mid-reply (a deploy,
+// a crash) nothing cancels it, so it would fire forever.
+const KEEP_ALIVE_CALLBACK = "_cf_keepAliveHeartbeat";
+
 // Use `any` for the Env generic to avoid type conflicts between the custom
 // SEND_EMAIL binding shape and the AIChatAgent constraint.  The actual env
 // is fully typed inside the tools via the closure.
 export class EmailAgent extends AIChatAgent<any> {
+	/**
+	 * Runs once per fresh instance, before any due schedule fires. Nothing in
+	 * this instance has started a reply yet, so every heartbeat left in storage
+	 * belongs to a reply that died with the previous instance.
+	 */
+	async onStart(props?: Record<string, unknown>) {
+		for (const schedule of this.getSchedules({ type: "interval" })) {
+			if (schedule.callback === KEEP_ALIVE_CALLBACK) {
+				await this.cancelSchedule(schedule.id);
+				console.warn("Cancelled a heartbeat left over from an interrupted reply:", schedule.id);
+			}
+		}
+		return super.onStart(props);
+	}
+
+	/** Counts today's auto-drafts for this mailbox; false once the cap is reached. */
+	private async takeAutoDraftSlot(): Promise<boolean> {
+		const day = new Date().toISOString().slice(0, 10);
+		const usage = await this.ctx.storage.get<{ day: string; count: number }>(AUTO_DRAFT_USAGE_KEY);
+		const count = usage?.day === day ? usage.count : 0;
+		if (count >= AUTO_DRAFT_DAILY_LIMIT) return false;
+		await this.ctx.storage.put(AUTO_DRAFT_USAGE_KEY, { day, count: count + 1 });
+		return true;
+	}
+
 	async onChatMessage(onFinish: any) {
 		const env = this.env as Env;
 		const mailboxId = this.name;
@@ -345,6 +382,11 @@ export class EmailAgent extends AIChatAgent<any> {
 		subject: string;
 		threadId: string;
 	}) {
+		if (!(await this.takeAutoDraftSlot())) {
+			console.warn(`Auto-draft skipped: ${emailData.mailboxId} reached ${AUTO_DRAFT_DAILY_LIMIT} drafts today.`);
+			return;
+		}
+
 		const env = this.env as Env;
 		const workersai = createWorkersAI({ binding: env.AI });
 		const tools = createEmailTools(env, emailData.mailboxId);

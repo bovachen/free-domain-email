@@ -241,12 +241,27 @@ export function useReportSpam() {
 		mutationFn: ({
 			mailboxId,
 			id,
-		}: { mailboxId: string; id: string }) =>
-			api.reportSpam(mailboxId, id),
-		onSuccess: (_data, { mailboxId }) => {
+			scope,
+		}: { mailboxId: string; id: string; scope?: "address" | "domain" }) =>
+			api.reportSpam(mailboxId, id, scope),
+		onSuccess: (_data, { mailboxId, scope }) => {
+			// A domain block can move mail in every mailbox, not just this one.
+			if (scope === "domain") {
+				qc.invalidateQueries({ queryKey: ["emails"] });
+				qc.invalidateQueries({ queryKey: ["unified-emails"] });
+				qc.invalidateQueries({ queryKey: queryKeys.unified.folders });
+			}
 			invalidate(mailboxId);
 			qc.invalidateQueries({ queryKey: queryKeys.blacklist });
 		},
+	});
+}
+
+export function useMarkNotSpam() {
+	const invalidate = useInvalidateEmailData();
+	return useMutation({
+		mutationFn: ({ mailboxId, id }: { mailboxId: string; id: string }) => api.markNotSpam(mailboxId, id),
+		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
 	});
 }
 

@@ -8,6 +8,7 @@ import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders } from "../../shared/folders";
+import { normalizeSenderAddress } from "../../shared/sender";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 
@@ -699,6 +700,52 @@ export class MailboxDO extends DurableObject<Env> {
 		);
 		cursor.toArray();
 		return cursor.rowsWritten ?? 0;
+	}
+
+	/** Like moveEmailsFromSender, for every sender at `domain` or its subdomains. */
+	async moveEmailsFromDomain(domain: string, folderId: string) {
+		const folder = this.db
+			.select({ id: schema.folders.id })
+			.from(schema.folders)
+			.where(eq(schema.folders.id, folderId))
+			.get();
+
+		if (!folder) return 0;
+
+		// Callers validate the domain, so it holds only [a-z0-9.-] and no LIKE wildcards.
+		const normalized = domain.trim().toLowerCase();
+		if (!/^[a-z0-9.-]+$/.test(normalized)) return 0;
+
+		const cursor = this.ctx.storage.sql.exec(
+			`UPDATE emails
+			 SET folder_id = ?1
+			 WHERE (LOWER(sender) LIKE ?2 OR LOWER(sender) LIKE ?3)
+			   AND folder_id NOT IN ('sent', 'draft', 'trash')`,
+			folderId,
+			`%@${normalized}`,
+			`%@%.${normalized}`,
+		);
+		cursor.toArray();
+		return cursor.rowsWritten ?? 0;
+	}
+
+	/** Whether this mailbox has ever sent mail to `address`: a known correspondent. */
+	async hasSentTo(address: string) {
+		const normalized = address.trim().toLowerCase();
+		if (!normalized) return false;
+		// instr narrows the scan; the exact check below stops "bob@x.com"
+		// from matching a message sent to "jimbob@x.com".
+		const rows = this.ctx.storage.sql
+			.exec<{ recipient: string | null; cc: string | null }>(
+				`SELECT recipient, cc FROM emails
+				 WHERE folder_id = 'sent'
+				   AND (instr(LOWER(recipient), ?1) > 0 OR instr(LOWER(COALESCE(cc, '')), ?1) > 0)
+				 LIMIT 50`,
+				normalized,
+			)
+			.toArray();
+		const addresses = (list: string | null) => (list || "").split(/[,;]/).map(normalizeSenderAddress);
+		return rows.some((row) => [...addresses(row.recipient), ...addresses(row.cc)].includes(normalized));
 	}
 
 	// ── Search (raw SQL — dynamic condition builder) ───────────────

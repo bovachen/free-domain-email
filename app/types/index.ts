@@ -69,7 +69,9 @@ export interface Folder {
 }
 
 export interface BlacklistEntry {
+	/** A sender address, or a domain when `type` is "domain". */
 	address: string;
+	type?: "address" | "domain";
 	createdAt: string;
 	reason?: string;
 	mailboxId?: string;

@@ -6,6 +6,7 @@ import { useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { Folders } from "shared/folders";
+import { isFreemailDomain, senderDomain } from "shared/sender";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
 import EmailPanelHeader from "~/components/email-panel/EmailPanelHeader";
 import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
@@ -13,7 +14,7 @@ import SingleMessageView from "~/components/email-panel/SingleMessageView";
 import ThreadMessage from "~/components/email-panel/ThreadMessage";
 import { splitEmailList, toEmailListValue } from "~/lib/utils";
 import api from "~/services/api";
-import { useDeleteEmail, useEmail, useMoveEmail, useReplyToEmail, useReportSpam, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
+import { useDeleteEmail, useEmail, useMarkNotSpam, useMoveEmail, useReplyToEmail, useReportSpam, useSendEmail, useThreadReplies, useUpdateEmail } from "~/queries/emails";
 import { useFolders } from "~/queries/folders";
 import { useMailbox } from "~/queries/mailboxes";
 import { useUIStore } from "~/hooks/useUIStore";
@@ -43,6 +44,7 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 	const deleteEmailMut = useDeleteEmail();
 	const moveEmailMut = useMoveEmail();
 	const reportSpamMut = useReportSpam();
+	const markNotSpamMut = useMarkNotSpam();
 	const sendEmailMut = useSendEmail();
 	const replyMut = useReplyToEmail();
 	const { data: folders = [] } = useFolders(mailboxId) as { data?: Folder[] };
@@ -101,19 +103,31 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 		? lastReceivedMessage
 		: email;
 	const canReportSpam = !isDraftFolder && email.folder_id !== Folders.SENT && email.folder_id !== Folders.DRAFT;
+	// Whole-domain blocks are offered only where they cannot catch other
+	// people: not for gmail.com-style providers, not for the user's own domain.
+	const spamDomain = senderDomain(spamTarget.sender || "");
+	const blockableDomain =
+		canReportSpam && spamDomain && !isFreemailDomain(spamDomain) && spamDomain !== senderDomain(mailboxId || "")
+			? spamDomain
+			: undefined;
 
-	const handleReportSpam = () => {
+	const handleReportSpam = (scope: "address" | "domain" = "address") => {
 		if (!mailboxId) return;
-		const blockLabel = spamTarget.sender ? `拉黑 ${spamTarget.sender}` : "拉黑该发件人";
-		if (!window.confirm(`举报为垃圾邮件并${blockLabel}？之后该发件人的邮件会直接进入垃圾邮件。`)) return;
+		const question =
+			scope === "domain"
+				? `举报为垃圾邮件并拉黑整个域名 ${spamDomain}？之后所有 @${spamDomain} 发来的邮件都会直接进入垃圾邮件，各邮箱里该域名的现有邮件也会移过去。`
+				: `举报为垃圾邮件并${spamTarget.sender ? `拉黑 ${spamTarget.sender}` : "拉黑该发件人"}？之后该发件人的邮件会直接进入垃圾邮件。`;
+		if (!window.confirm(question)) return;
 		reportSpamMut.mutate(
-			{ mailboxId, id: spamTarget.id },
+			{ mailboxId, id: spamTarget.id, scope },
 			{
 				onSuccess: (result) => {
 					toastManager.add({
-						title: result.sender
-							? `已拉黑 ${result.sender}，邮件已移到垃圾邮件`
-							: "已移到垃圾邮件",
+						title: result.domain
+							? `已拉黑整个域名 ${result.domain}，邮件已移到垃圾邮件`
+							: result.sender
+								? `已拉黑 ${result.sender}，邮件已移到垃圾邮件`
+								: "已移到垃圾邮件",
 					});
 					closePanel();
 				},
@@ -129,8 +143,28 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 
 	const handleNotSpam = () => {
 		if (!mailboxId) return;
-		moveEmailMut.mutate({ mailboxId, id: email.id, folderId: Folders.INBOX });
-		toastManager.add({ title: "已移回收件箱。如需继续接收该发件人的邮件，请在黑名单中解除拉黑。" });
+		markNotSpamMut.mutate(
+			{ mailboxId, id: email.id },
+			{
+				onSuccess: ({ trusted, blockedBy }) => {
+					toastManager.add({
+						title: blockedBy
+							? blockedBy.type === "domain"
+								? `已移回收件箱。域名 ${blockedBy.address} 仍在黑名单中，需解除拉黑才能正常收信。`
+								: "已移回收件箱。该发件人仍在黑名单中，需解除拉黑才能正常收信。"
+							: trusted
+								? `已移回收件箱，今后不再拦截 ${trusted}`
+								: "已移回收件箱",
+					});
+				},
+				onError: (err) => {
+					toastManager.add({
+						title: err instanceof Error ? err.message : "操作失败",
+						variant: "error",
+					});
+				},
+			},
+		);
 		closePanel();
 	};
 
@@ -216,7 +250,9 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				onMove={handleMove}
 				onViewSource={() => setSourceViewEmail(email)}
 				onDelete={handleDelete}
-				onReportSpam={handleReportSpam}
+				onReportSpam={() => handleReportSpam("address")}
+				onBlockDomain={blockableDomain ? () => handleReportSpam("domain") : undefined}
+				blockDomain={blockableDomain}
 				onNotSpam={handleNotSpam}
 				isSpamFolder={isSpamFolder}
 				canReportSpam={canReportSpam}

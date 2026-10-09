@@ -179,9 +179,14 @@ const api = {
 			method: "DELETE",
 			body: JSON.stringify({ address }),
 		}),
-	reportSpam: (mailboxId: string, emailId: string) =>
-		post<{ status: string; sender: string | null; blocked: boolean }>(
+	reportSpam: (mailboxId: string, emailId: string, scope: "address" | "domain" = "address") =>
+		post<{ status: string; sender: string | null; blocked: boolean; domain?: string }>(
 			`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/spam`,
+			{ scope },
+		),
+	markNotSpam: (mailboxId: string, emailId: string) =>
+		post<{ status: string; trusted: string | null; blockedBy: BlacklistEntry | null }>(
+			`/api/v1/mailboxes/${mailboxId}/emails/${emailId}/not-spam`,
 		),
 	listUnifiedEmails: (params: Record<string, string>, opts?: { signal?: AbortSignal }) =>
 		get<EmailListResponse>("/api/v1/unified/emails", { params, signal: opts?.signal }),

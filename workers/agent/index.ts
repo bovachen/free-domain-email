@@ -263,9 +263,10 @@ function createEmailTools(env: Env, mailboxId: string) {
 				"Report an email as spam, move it (and other mail from the same sender) to Spam, and blacklist the sender so future messages skip the inbox.",
 			parameters: z.object({
 				emailId: z.string().describe("The email ID to report as spam"),
+				blockDomain: z.boolean().optional().describe("Block the sender's whole domain instead of just their address. Only for domains that exist to send spam; refused for public providers like gmail.com or outlook.com."),
 			}),
-			execute: async ({ emailId }): Promise<unknown> => {
-				return toolReportSpam(env, mailboxId, emailId);
+			execute: async ({ emailId, blockDomain }): Promise<unknown> => {
+				return toolReportSpam(env, mailboxId, emailId, blockDomain);
 			},
 		}),
 

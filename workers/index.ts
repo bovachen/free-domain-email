@@ -16,6 +16,7 @@ import {
 	generateMessageId,
 	buildThreadingHeaders,
 	listMailboxes,
+	stripHtmlToText,
 } from "./lib/email-helpers";
 import {
 	configuredDomains,
@@ -36,12 +37,15 @@ import {
 import { purgeDomainData, purgeMailbox } from "./lib/purge";
 import {
 	addToBlacklist,
+	findBlacklistMatch,
 	getBlacklist,
-	isBlacklisted,
-	moveSenderToSpam,
+	isTrustedSender,
+	markEmailNotSpam,
+	moveBlockedToSpam,
 	removeFromBlacklist,
 	reportEmailAsSpam,
 } from "./lib/blacklist";
+import { checkInboundSpam, extractLinkHosts, SPAM_HEADER } from "./lib/spam-filter";
 import {
 	discoverTelegramChatId,
 	getTelegramSettings,
@@ -57,6 +61,7 @@ import { getPollHeartbeat, handleTelegramUpdate, type TelegramUpdate } from "./l
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
+import { parseBlockTarget } from "../shared/sender";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 
@@ -320,11 +325,14 @@ app.post("/api/v1/settings/blacklist", async (c) => {
 	const body = (await c.req.json()) as { address?: string };
 	try {
 		const entries = await addToBlacklist(c.env.BUCKET, { address: body.address || "" });
-		c.executionCtx.waitUntil(
-			moveSenderToSpam(c.env, body.address || "").catch((e) =>
-				console.error("Failed to move blacklisted sender to spam:", (e as Error).message),
-			),
-		);
+		const target = parseBlockTarget(body.address || "");
+		if (target) {
+			c.executionCtx.waitUntil(
+				moveBlockedToSpam(c.env, target).catch((e) =>
+					console.error("Failed to move blacklisted mail to spam:", (e as Error).message),
+				),
+			);
+		}
 		return c.json({ entries });
 	} catch (e) {
 		return c.json({ error: (e as Error).message }, 400);
@@ -333,7 +341,7 @@ app.post("/api/v1/settings/blacklist", async (c) => {
 
 app.delete("/api/v1/settings/blacklist", async (c) => {
 	const body = (await c.req.json()) as { address?: string };
-	if (!body.address) return c.json({ error: "缺少邮箱地址" }, 400);
+	if (!body.address) return c.json({ error: "缺少邮箱地址或域名" }, 400);
 	const entries = await removeFromBlacklist(c.env.BUCKET, body.address);
 	return c.json({ entries });
 });
@@ -549,7 +557,17 @@ app.post("/api/v1/mailboxes/:mailboxId/emails/:id/move", async (c: AppContext) =
 app.post("/api/v1/mailboxes/:mailboxId/emails/:id/spam", async (c: AppContext) => {
 	const mailboxId = c.req.param("mailboxId")!;
 	const emailId = c.req.param("id")!;
-	const result = await reportEmailAsSpam(c.env, mailboxId, emailId);
+	const body = (await c.req.json().catch(() => ({}))) as { scope?: string };
+	const scope = body.scope === "domain" ? "domain" : "address";
+	const result = await reportEmailAsSpam(c.env, mailboxId, emailId, scope);
+	if ("error" in result) {
+		return c.json({ error: result.error }, result.status as 400 | 404);
+	}
+	return c.json(result);
+});
+
+app.post("/api/v1/mailboxes/:mailboxId/emails/:id/not-spam", async (c: AppContext) => {
+	const result = await markEmailNotSpam(c.env, c.req.param("mailboxId")!, c.req.param("id")!);
 	if ("error" in result) {
 		return c.json({ error: result.error }, result.status as 400 | 404);
 	}
@@ -728,8 +746,35 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 	const originalMessageId = parsedEmail.messageId ? extractMsgId(parsedEmail.messageId) : null;
 
 	const senderAddress = (parsedEmail.from?.address || "").toLowerCase();
-	const blockedSender = senderAddress ? await isBlacklisted(env.BUCKET, senderAddress) : false;
-	const inboundFolder = blockedSender ? Folders.SPAM : Folders.INBOX;
+	const blockedBy = senderAddress ? await findBlacklistMatch(env.BUCKET, senderAddress) : null;
+	let spamReason: string | null = blockedBy
+		? blockedBy.type === "domain" ? `域名 ${blockedBy.address} 已拉黑` : "发件人已拉黑"
+		: null;
+
+	// Trusted senders (marked "not spam" before) skip the filter; people this
+	// mailbox has written to skip the AI layer but still face the DMARC check.
+	if (!blockedBy && !(senderAddress && (await isTrustedSender(env.BUCKET, senderAddress)))) {
+		const knownContact = senderAddress ? await stub.hasSentTo(senderAddress) : false;
+		const html = parsedEmail.html || "";
+		const text = parsedEmail.text || stripHtmlToText(html);
+		const verdict = await checkInboundSpam(env.AI, {
+			headers: parsedEmail.headers,
+			skipAi: knownContact,
+			fromName: parsedEmail.from?.name || undefined,
+			fromAddress: senderAddress,
+			replyTo: parsedEmail.replyTo?.[0]?.address?.toLowerCase(),
+			recipient: mailboxId,
+			subject: parsedEmail.subject || "",
+			text,
+			linkHosts: extractLinkHosts(html, text),
+		});
+		if (verdict.spam) spamReason = verdict.reason || "疑似垃圾邮件";
+	}
+	const inboundFolder = spamReason ? Folders.SPAM : Folders.INBOX;
+	// Stamped like SpamAssassin's X-Spam-Status, so "查看原始邮件" shows why.
+	const storedHeaders = spamReason
+		? [{ key: SPAM_HEADER, value: spamReason }, ...parsedEmail.headers]
+		: parsedEmail.headers;
 
 	await stub.createEmail(inboundFolder, {
 		id: messageId, subject: parsedEmail.subject || "",
@@ -738,11 +783,11 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
-		thread_id: threadId, message_id: originalMessageId, raw_headers: JSON.stringify(parsedEmail.headers),
+		thread_id: threadId, message_id: originalMessageId, raw_headers: JSON.stringify(storedHeaders),
 	}, attachmentData);
 
-	if (blockedSender) {
-		console.log(`Blacklisted sender ${senderAddress} delivered to spam for ${mailboxId}`);
+	if (spamReason) {
+		console.log(`Spam from ${senderAddress} delivered to spam for ${mailboxId}: ${spamReason}`);
 		return;
 	}
 

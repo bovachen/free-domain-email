@@ -437,11 +437,12 @@ export class EmailMCP extends McpAgent<Env> {
 			{
 				mailboxId: z.string().describe("The mailbox email address"),
 				emailId: z.string().describe("The email ID to report as spam"),
+				blockDomain: z.boolean().optional().describe("Block the sender's whole domain instead of just their address. Only for domains that exist to send spam; refused for public providers like gmail.com or outlook.com."),
 			},
-			async ({ mailboxId, emailId }) => {
+			async ({ mailboxId, emailId, blockDomain }) => {
 				const denied = await verifyMailbox(mailboxId);
 				if (denied) return denied;
-				const result = await toolReportSpam(env, mailboxId, emailId);
+				const result = await toolReportSpam(env, mailboxId, emailId, blockDomain);
 				if ("error" in result) return mcpError(result.error);
 				return mcpText(result);
 			},

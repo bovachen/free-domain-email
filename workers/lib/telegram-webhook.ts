@@ -12,14 +12,15 @@
  */
 
 import { Folders } from "../../shared/folders";
-import { isValidEmailAddress, normalizeSenderAddress } from "../../shared/sender";
+import { isValidEmailAddress, normalizeSenderAddress, parseBlockTarget } from "../../shared/sender";
 import { sendEmail } from "../email-sender";
 import {
 	addToBlacklist,
-	isBlacklisted,
-	moveSenderToSpam,
+	findBlacklistMatch,
+	moveBlockedToSpam,
 	removeFromBlacklist,
 	reportEmailAsSpam,
+	unblockSender,
 } from "./blacklist";
 import {
 	buildQuotedReplyBlock,
@@ -68,7 +69,7 @@ export interface TelegramUpdate {
 	callback_query?: TgCallbackQuery;
 }
 
-const ACTIONS = ["spam", "trash", "inbox", "block", "unblock", "read", "unread", "star", "unstar"] as const;
+const ACTIONS = ["spam", "trash", "inbox", "block", "blockdomain", "unblock", "read", "unread", "star", "unstar"] as const;
 type Action = (typeof ACTIONS)[number] | "noop";
 
 function parseCallback(data: string | undefined): { action: Action; emailId: string } | null {
@@ -90,11 +91,13 @@ async function getEmailStatus(env: Env, ref: TelegramMessageRef): Promise<EmailS
 		| null;
 	if (!email) return null;
 	const sender = email.sender || ref.sender;
+	const blockedBy = sender ? await findBlacklistMatch(env.BUCKET, sender) : null;
 	return {
 		folder: email.folder_id || "inbox",
 		read: Boolean(email.read),
 		starred: Boolean(email.starred),
-		blocked: sender ? await isBlacklisted(env.BUCKET, sender) : false,
+		blocked: Boolean(blockedBy),
+		blockedDomain: blockedBy?.type === "domain" ? blockedBy.address : undefined,
 	};
 }
 
@@ -239,12 +242,19 @@ async function handleCallback(env: Env, settings: TelegramSettings, query: TgCal
 			}
 			return answer(settings, query.id, `已拉黑 ${result.sender}，该发件人的邮件今后直接进垃圾邮件`);
 		}
+		case "blockdomain": {
+			const result = await reportEmailAsSpam(env, ref.mailboxId, ref.emailId, "domain");
+			if ("error" in result) return answer(settings, query.id, result.error, true);
+			await refresh();
+			return answer(settings, query.id, `已拉黑整个域名 ${result.domain}，该域名的邮件今后直接进垃圾邮件`);
+		}
 		case "unblock": {
-			const address = normalizeSenderAddress(ref.sender);
-			if (address) await removeFromBlacklist(env.BUCKET, address);
+			// Undo whatever blocks this sender: their address, their domain, or both.
+			const removed = await unblockSender(env.BUCKET, ref.sender);
 			await stub.moveEmail(ref.emailId, Folders.INBOX);
 			await refresh();
-			return answer(settings, query.id, address ? `已解除拉黑 ${address}，邮件已移回收件箱` : "已移回收件箱");
+			const label = removed.map((e) => (e.type === "domain" ? `域名 ${e.address}` : e.address)).join("、");
+			return answer(settings, query.id, label ? `已解除拉黑 ${label}，邮件已移回收件箱` : "已移回收件箱");
 		}
 	}
 }
@@ -327,20 +337,25 @@ async function handleMessage(env: Env, settings: TelegramSettings, message: TgMe
 	if (String(chatId) !== settings.chatId) return;
 
 	if (text.startsWith("/start")) {
-		return say(settings, chatId, "free-domain-email 已连接。新邮件会推送到这里；按钮可标记已读、加星标、删除、标为垃圾邮件或拉黑发件人，直接回复通知消息即可发送邮件回复。\n\n命令：/block 地址　/unblock 地址");
+		return say(settings, chatId, "free-domain-email 已连接。新邮件会推送到这里；按钮可标记已读、加星标、删除、标为垃圾邮件、拉黑发件人或拉黑整个域名，直接回复通知消息即可发送邮件回复。\n\n命令：/block 地址或域名　/unblock 地址或域名\n例如 /block spam@example.com 只拉黑这个地址，/block example.com 拉黑整个域名。");
 	}
 
 	const cmd = text.match(/^\/(block|unblock)(?:@\w+)?\s+(.+)$/i);
 	if (cmd) {
-		const address = normalizeSenderAddress(cmd[2]);
-		if (!isValidEmailAddress(address)) return say(settings, chatId, `地址无效：${cmd[2]}`);
+		const target = parseBlockTarget(cmd[2]);
+		if (!target) return say(settings, chatId, `不是有效的地址或域名：${cmd[2]}`);
+		const label = target.type === "domain" ? `整个域名 ${target.value}` : target.value;
 		if (cmd[1].toLowerCase() === "block") {
-			await addToBlacklist(env.BUCKET, { address, reason: "telegram" });
-			await moveSenderToSpam(env, address);
-			return say(settings, chatId, `已拉黑 ${address}，其现有邮件已移到垃圾邮件。`);
+			try {
+				await addToBlacklist(env.BUCKET, { address: cmd[2], reason: "telegram" });
+			} catch (e) {
+				return say(settings, chatId, (e as Error).message);
+			}
+			await moveBlockedToSpam(env, target);
+			return say(settings, chatId, `已拉黑 ${label}，现有邮件已移到垃圾邮件。`);
 		}
-		await removeFromBlacklist(env.BUCKET, address);
-		return say(settings, chatId, `已解除拉黑 ${address}。`);
+		await removeFromBlacklist(env.BUCKET, target.value);
+		return say(settings, chatId, `已解除拉黑 ${label}。`);
 	}
 
 	// A reply to one of our notifications becomes an email reply.

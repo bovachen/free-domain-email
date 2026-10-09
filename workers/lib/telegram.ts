@@ -2,6 +2,8 @@
 // Licensed under the Apache 2.0 license found in the LICENSE file or at:
 //     https://opensource.org/licenses/Apache-2.0
 
+import { isFreemailDomain, senderDomain } from "../../shared/sender";
+
 const SETTINGS_KEY = "settings/telegram.json";
 
 export interface TelegramSettings {
@@ -285,6 +287,8 @@ export interface EmailStatus {
 	starred: boolean;
 	/** Sender is on the blacklist. */
 	blocked: boolean;
+	/** Set when the block covers the sender's whole domain. */
+	blockedDomain?: string;
 }
 
 export const NEW_EMAIL_STATUS: EmailStatus = { folder: "inbox", read: false, starred: false, blocked: false };
@@ -350,14 +354,23 @@ export function buildNotificationKeyboard(
 		]);
 	}
 
-	// Row: sender.
+	// Row: sender. The domain button is left out where it would hit other
+	// people (public mailbox providers) or the user's own domain.
 	if (status.blocked) {
 		rows.push([
-			{ text: `✅ 已拉黑 ${ref.sender}`, callback_data: "noop" },
+			{
+				text: status.blockedDomain ? `✅ 已拉黑域名 ${status.blockedDomain}` : `✅ 已拉黑 ${ref.sender}`,
+				callback_data: "noop",
+			},
 			{ text: "↩️ 撤销拉黑", callback_data: `unblock:${id}` },
 		]);
 	} else {
-		rows.push([{ text: "🚫 拉黑发件人", callback_data: `block:${id}` }]);
+		const domain = senderDomain(ref.sender);
+		const senderRow: (typeof rows)[number] = [{ text: "🚫 拉黑发件人", callback_data: `block:${id}` }];
+		if (domain && !isFreemailDomain(domain) && domain !== senderDomain(ref.mailboxId)) {
+			senderRow.push({ text: "⛔ 拉黑整个域名", callback_data: `blockdomain:${id}` });
+		}
+		rows.push(senderRow);
 	}
 	return { inline_keyboard: rows };
 }

@@ -361,8 +361,9 @@ export async function toolReportSpam(
 	env: Env,
 	mailboxId: string,
 	emailId: string,
+	blockDomain = false,
 ) {
-	const result = await reportEmailAsSpam(env, mailboxId, emailId);
+	const result = await reportEmailAsSpam(env, mailboxId, emailId, blockDomain ? "domain" : "address");
 	if ("error" in result) return { error: result.error };
 	return result;
 }

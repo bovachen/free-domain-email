@@ -26,6 +26,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router";
 import { Folders, SYSTEM_FOLDER_IDS } from "shared/folders";
+import { parseBlockTarget } from "shared/sender";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useCreateFolder, useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
@@ -242,10 +243,13 @@ export default function Sidebar() {
 	const handleAddBlacklist = async () => {
 		const address = blacklistAddress.trim();
 		if (!address) return;
+		const target = parseBlockTarget(address);
 		try {
 			await addToBlacklist.mutateAsync(address);
 			setBlacklistAddress("");
-			toastManager.add({ title: `已拉黑 ${address}` });
+			toastManager.add({
+				title: target?.type === "domain" ? `已拉黑整个域名 ${target.value}` : `已拉黑 ${target?.value ?? address}`,
+			});
 		} catch (err) {
 			toastManager.add({
 				title: err instanceof Error ? err.message : "拉黑失败",
@@ -601,12 +605,15 @@ export default function Sidebar() {
 				{blacklistOpen && (
 					<div className="px-3 pb-2 space-y-2">
 						<p className="text-xs text-kumo-subtle">
-							已拉黑的发件人不会进入收件箱，也不会触发 Telegram 通知。举报垃圾邮件时也会将发件人加入黑名单。
+							拉黑后邮件直接进垃圾邮件，不发 Telegram 通知。填完整地址只拉黑该地址，填域名（如 example.com）拉黑整个域名；gmail.com 等公共邮箱只能拉黑单个地址。
+						</p>
+						<p className="text-xs text-kumo-subtle">
+							其余新邮件会经过 SPF/DKIM/DMARC 和 AI 检查，疑似钓鱼或垃圾广告自动进垃圾邮件；点「不是垃圾邮件」可放行该发件人。
 						</p>
 						<div className="flex gap-1">
 							<input
-								aria-label="要拉黑的地址"
-								placeholder="spam@example.com"
+								aria-label="要拉黑的地址或域名"
+								placeholder="邮箱地址或域名"
 								value={blacklistAddress}
 								onChange={(e) => setBlacklistAddress(e.target.value)}
 								onKeyDown={(e) => {
@@ -632,12 +639,15 @@ export default function Sidebar() {
 							) : (
 								blacklist?.entries.map((entry) => (
 									<div
-										key={entry.address}
+										key={`${entry.type ?? "address"}:${entry.address}`}
 										className="flex items-center gap-1 rounded-md bg-kumo-tint px-2 py-1"
 									>
 										<span className="min-w-0 flex-1 truncate text-xs text-kumo-default" title={entry.address}>
-											{entry.address}
+											{entry.type === "domain" ? `@${entry.address}` : entry.address}
 										</span>
+										{entry.type === "domain" && (
+											<span className="shrink-0 text-[10px] text-kumo-subtle">整个域名</span>
+										)}
 										<button
 											type="button"
 											className="shrink-0 text-kumo-subtle hover:text-kumo-destructive"

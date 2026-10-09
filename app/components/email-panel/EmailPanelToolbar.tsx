@@ -16,6 +16,7 @@ import {
 	FolderSimpleIcon,
 	PaperPlaneTiltIcon,
 	PencilSimpleIcon,
+	ProhibitIcon,
 	StarIcon,
 	TrashIcon,
 	XIcon,
@@ -42,6 +43,9 @@ interface EmailPanelToolbarProps {
 	onViewSource: () => void;
 	onDelete: () => void;
 	onReportSpam?: () => void;
+	/** Shown only when the sender's domain may be blocked as a whole. */
+	onBlockDomain?: () => void;
+	blockDomain?: string;
 	onNotSpam?: () => void;
 	isSpamFolder?: boolean;
 	canReportSpam?: boolean;
@@ -66,6 +70,8 @@ export default function EmailPanelToolbar({
 	onViewSource,
 	onDelete,
 	onReportSpam,
+	onBlockDomain,
+	blockDomain,
 	onNotSpam,
 	isSpamFolder = false,
 	canReportSpam = false,
@@ -183,17 +189,32 @@ export default function EmailPanelToolbar({
 						</Button>
 					</Tooltip>
 				) : canReportSpam && onReportSpam ? (
-					<Tooltip content="举报垃圾邮件并拉黑发件人" side="bottom" asChild>
-						<Button
-							variant="ghost"
-							shape="square"
-							size="sm"
-							icon={<FlagIcon size={18} className="text-kumo-destructive" />}
-							onClick={onReportSpam}
-							loading={isReportingSpam}
-							aria-label="举报垃圾邮件并拉黑发件人"
-						/>
-					</Tooltip>
+					<>
+						<Tooltip content="举报垃圾邮件并拉黑发件人" side="bottom" asChild>
+							<Button
+								variant="ghost"
+								shape="square"
+								size="sm"
+								icon={<FlagIcon size={18} className="text-kumo-destructive" />}
+								onClick={onReportSpam}
+								loading={isReportingSpam}
+								aria-label="举报垃圾邮件并拉黑发件人"
+							/>
+						</Tooltip>
+						{onBlockDomain && blockDomain && (
+							<Tooltip content={`举报垃圾邮件并拉黑整个域名 @${blockDomain}`} side="bottom" asChild>
+								<Button
+									variant="ghost"
+									shape="square"
+									size="sm"
+									icon={<ProhibitIcon size={18} className="text-kumo-destructive" />}
+									onClick={onBlockDomain}
+									disabled={isReportingSpam}
+									aria-label={`举报垃圾邮件并拉黑整个域名 ${blockDomain}`}
+								/>
+							</Tooltip>
+						)}
+					</>
 				) : null}
 				<Tooltip content="查看原始邮件" side="bottom" asChild>
 					<Button

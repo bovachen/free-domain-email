@@ -760,6 +760,7 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		const verdict = await checkInboundSpam(env.AI, {
 			headers: parsedEmail.headers,
 			skipAi: knownContact,
+			ownDomains: domains,
 			fromName: parsedEmail.from?.name || undefined,
 			fromAddress: senderAddress,
 			replyTo: parsedEmail.replyTo?.[0]?.address?.toLowerCase(),

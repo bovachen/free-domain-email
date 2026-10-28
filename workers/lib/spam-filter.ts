@@ -204,12 +204,19 @@ export async function classifyWithAi(ai: Ai, input: ClassifyInput): Promise<Spam
 /** Authentication first (free and certain), then the model. */
 export async function checkInboundSpam(
 	ai: Ai,
-	input: Omit<ClassifyInput, "auth"> & { headers: Header[] | undefined; skipAi?: boolean },
+	input: Omit<ClassifyInput, "auth"> & { headers: Header[] | undefined; skipAi?: boolean; ownDomains?: string[] },
 ): Promise<SpamVerdict> {
 	const auth = parseAuthResults(input.headers);
 	const byAuth = authVerdict(auth);
 	if (byAuth) return byAuth;
 	if (input.skipAi) return { spam: false, source: "none" };
-	const { headers: _headers, skipAi: _skipAi, ...rest } = input;
+	// A DMARC pass on one of the user's own domains means one of their own
+	// senders (a storefront's order mail, say) wrote it; the model has flagged
+	// such mail as ads because it links to another site.
+	const fromDomain = input.fromAddress.split("@")[1];
+	if (auth?.dmarc === "pass" && fromDomain && input.ownDomains?.includes(fromDomain)) {
+		return { spam: false, source: "none" };
+	}
+	const { headers: _headers, skipAi: _skipAi, ownDomains: _ownDomains, ...rest } = input;
 	return classifyWithAi(ai, { ...rest, auth });
 }

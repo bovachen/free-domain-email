@@ -526,6 +526,22 @@ app.post("/api/v1/mailboxes/:mailboxId/drafts", async (c: AppContext) => {
 	return c.json({ id: messageId, status: "draft", subject: subject || "", recipient: to || "", date: now }, 201);
 });
 
+const BulkActionBody = z.object({
+	folder: z.string().min(1),
+	action: z.enum(["read", "unread", "move", "delete"]),
+	ids: z.array(z.string()).max(500).optional(),
+	all: z.boolean().optional(),
+	targetFolder: z.string().optional(),
+}).refine((b) => b.all || (b.ids && b.ids.length > 0), { message: "没有选择邮件" })
+	.refine((b) => b.action !== "move" || !!b.targetFolder, { message: "缺少目标文件夹" });
+
+app.post("/api/v1/mailboxes/:mailboxId/emails/bulk", async (c: AppContext) => {
+	const parsed = BulkActionBody.safeParse(await c.req.json().catch(() => ({})));
+	if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message || "参数错误" }, 400);
+	const affected = await c.var.mailboxStub.bulkAction(parsed.data);
+	return c.json({ affected });
+});
+
 app.get("/api/v1/mailboxes/:mailboxId/emails/:id", async (c: AppContext) => {
 	const email = await c.var.mailboxStub.getEmail(c.req.param("id")!);
 	if (!email) return c.json({ error: "邮件不存在" }, 404);

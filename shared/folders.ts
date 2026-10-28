@@ -63,3 +63,11 @@ export const MOVE_FOLDER_TOOL_DESCRIPTION =
 export function getFolderDisplayName(folderId: string, name?: string | null): string {
 	return FOLDER_DISPLAY_NAMES[folderId.toLowerCase()] || name || folderId.charAt(0).toUpperCase() + folderId.slice(1);
 }
+
+/**
+ * Deleting from these folders removes mail for good; anywhere else "delete"
+ * moves it to the trash, where it can still be restored.
+ */
+export function deletesPermanently(folderId: string | null | undefined): boolean {
+	return folderId === Folders.TRASH || folderId === Folders.SPAM || folderId === Folders.DRAFT;
+}

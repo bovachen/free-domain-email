@@ -128,6 +128,16 @@ export interface DomainSetupResult {
 	steps: { step: string; ok: boolean; message: string }[];
 }
 
+export interface BulkEmailRequest {
+	/** Folder the list is showing; ids expand to their conversations in it. */
+	folder: string;
+	action: "read" | "unread" | "move" | "delete";
+	ids?: string[];
+	/** Every email in the folder instead of `ids`. */
+	all?: boolean;
+	targetFolder?: string;
+}
+
 export interface DomainPurgeProgress {
 	done: boolean;
 	cursor: string | null;
@@ -215,6 +225,8 @@ const api = {
 		put<Email>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`, data),
 	deleteEmail: (mailboxId: string, id: string) =>
 		del<void>(`/api/v1/mailboxes/${mailboxId}/emails/${id}`),
+	bulkEmails: (mailboxId: string, body: BulkEmailRequest) =>
+		post<{ affected: number }>(`/api/v1/mailboxes/${mailboxId}/emails/bulk`, body),
 	moveEmail: (mailboxId: string, id: string, folderId: string) =>
 		post<void>(`/api/v1/mailboxes/${mailboxId}/emails/${id}/move`, { folderId }),
 	getThread: (mailboxId: string, threadId: string, opts?: { signal?: AbortSignal }) =>

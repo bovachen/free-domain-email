@@ -5,7 +5,7 @@
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { Folders } from "shared/folders";
+import { deletesPermanently, Folders } from "shared/folders";
 import { isFreemailDomain, senderDomain } from "shared/sender";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
 import EmailPanelHeader from "~/components/email-panel/EmailPanelHeader";
@@ -97,7 +97,16 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 
 	const toggleStar = () => { if (mailboxId) updateEmail.mutate({ mailboxId, id: email.id, data: { starred: !email.starred } }); };
 	const handleMove = (folderId: string) => { if (mailboxId) { moveEmailMut.mutate({ mailboxId, id: email.id, folderId }); closePanel(); } };
-	const handleDelete = () => { if (mailboxId) { if (!window.confirm("确定要删除这封邮件吗？")) return; deleteEmailMut.mutate({ mailboxId, id: email.id }); closePanel(); } };
+	const handleDelete = () => {
+		if (!mailboxId) return;
+		if (deletesPermanently(folder || email.folder_id)) {
+			if (!window.confirm("永久删除这封邮件？删除后无法恢复。")) return;
+			deleteEmailMut.mutate({ mailboxId, id: email.id });
+		} else {
+			moveEmailMut.mutate({ mailboxId, id: email.id, folderId: Folders.TRASH });
+		}
+		closePanel();
+	};
 
 	const spamTarget = lastReceivedMessage?.sender && lastReceivedMessage.sender !== currentMailbox?.email
 		? lastReceivedMessage

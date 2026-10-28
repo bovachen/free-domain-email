@@ -675,6 +675,91 @@ export class MailboxDO extends DurableObject<Env> {
 	}
 
 	/**
+	 * Apply one action to many emails of a folder, for the list's bulk
+	 * toolbar. `ids` are the rows the list showed (one per conversation), so
+	 * each expands to every email of its conversation in the folder (drafts
+	 * group by the email they reply to, as the list does); `all` takes every
+	 * email in the folder instead. Marking read also covers the
+	 * conversation's copies in other folders, since the unread dot counts
+	 * them. Returns how many emails changed.
+	 */
+	async bulkAction(options: {
+		folder: string;
+		action: "read" | "unread" | "move" | "delete";
+		ids?: string[];
+		all?: boolean;
+		targetFolder?: string;
+	}): Promise<number> {
+		const sql = this.ctx.storage.sql;
+		const folderRow = [...sql.exec(`SELECT id FROM folders WHERE id = ?1 OR name = ?1 LIMIT 1`, options.folder)][0] as
+			| { id: string }
+			| undefined;
+		if (!folderRow) return 0;
+		const folderId = folderRow.id;
+
+		let targets: string[];
+		if (options.all) {
+			targets = [...sql.exec(`SELECT id FROM emails WHERE folder_id = ?`, folderId)].map((r) => r.id as string);
+		} else {
+			const ids = JSON.stringify(options.ids ?? []);
+			const groupColumn = folderId === Folders.DRAFT ? "in_reply_to" : "thread_id";
+			targets = [
+				...sql.exec(
+					`SELECT id FROM emails
+					 WHERE folder_id = ?1
+					   AND (id IN (SELECT value FROM json_each(?2))
+					     OR ${groupColumn} IN (
+					       SELECT ${groupColumn} FROM emails
+					       WHERE id IN (SELECT value FROM json_each(?2)) AND ${groupColumn} IS NOT NULL))`,
+					folderId,
+					ids,
+				),
+			].map((r) => r.id as string);
+		}
+		if (targets.length === 0) return 0;
+		const targetJson = JSON.stringify(targets);
+
+		switch (options.action) {
+			case "read":
+				sql.exec(
+					`UPDATE emails SET read = 1
+					 WHERE read = 0
+					   AND (id IN (SELECT value FROM json_each(?1))
+					     OR thread_id IN (
+					       SELECT thread_id FROM emails
+					       WHERE id IN (SELECT value FROM json_each(?1)) AND thread_id IS NOT NULL))`,
+					targetJson,
+				);
+				break;
+			case "unread":
+				sql.exec(`UPDATE emails SET read = 0 WHERE id IN (SELECT value FROM json_each(?1))`, targetJson);
+				break;
+			case "move": {
+				const target = options.targetFolder;
+				if (!target || target === folderId) return 0;
+				if ([...sql.exec(`SELECT id FROM folders WHERE id = ?`, target)].length === 0) return 0;
+				sql.exec(`UPDATE emails SET folder_id = ?1 WHERE id IN (SELECT value FROM json_each(?2))`, target, targetJson);
+				break;
+			}
+			case "delete": {
+				const keys = [
+					...sql.exec(
+						`SELECT id, email_id, filename FROM attachments WHERE email_id IN (SELECT value FROM json_each(?1))`,
+						targetJson,
+					),
+				].map((r) => `attachments/${r.email_id}/${r.id}/${r.filename}`);
+				for (let i = 0; i < keys.length; i += 1000) {
+					await this.env.BUCKET.delete(keys.slice(i, i + 1000));
+				}
+				sql.exec(`DELETE FROM attachments WHERE email_id IN (SELECT value FROM json_each(?1))`, targetJson);
+				sql.exec(`DELETE FROM emails WHERE id IN (SELECT value FROM json_each(?1))`, targetJson);
+				break;
+			}
+		}
+		return targets.length;
+	}
+
+	/**
 	 * Move every message from a sender into a folder, skipping sent/draft/trash
 	 * so outbound copies stay put. Used by "report spam and block sender".
 	 */

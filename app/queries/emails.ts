@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import api from "~/services/api";
+import api, { type BulkEmailRequest } from "~/services/api";
 import type { Email } from "~/types";
 import { queryKeys } from "./keys";
 
@@ -218,6 +218,20 @@ export function useDeleteEmail() {
 		}: { mailboxId: string; id: string }) =>
 			api.deleteEmail(mailboxId, id),
 		onSuccess: (_data, { mailboxId }) => invalidate(mailboxId),
+	});
+}
+
+/** Runs one bulk request per mailbox (the unified view spans several); resolves to the emails changed. */
+export function useBulkEmailAction() {
+	const invalidate = useInvalidateEmailData();
+	return useMutation({
+		mutationFn: async (batches: { mailboxId: string; body: BulkEmailRequest }[]) => {
+			const results = await Promise.all(batches.map((b) => api.bulkEmails(b.mailboxId, b.body)));
+			return results.reduce((sum, r) => sum + (r?.affected ?? 0), 0);
+		},
+		onSettled: (_n, _err, batches) => {
+			for (const b of batches) invalidate(b.mailboxId);
+		},
 	});
 }
 

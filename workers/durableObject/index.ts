@@ -94,8 +94,29 @@ interface EmailData {
 	retention?: string | null;
 }
 
-/** Every row of a mailbox, as rebuildStorage backs it up to R2. */
-interface MailboxBackup {
+/** Insert one row as read back by SELECT *; table and column names come from our own schema. */
+function insertRow(sql: SqlStorage, table: string, row: Record<string, SqlStorageValue>, verb = "INSERT") {
+	const columns = Object.keys(row);
+	sql.exec(
+		`${verb} INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+		...columns.map((column) => row[column]),
+	);
+}
+
+/** Run a SQLite call again when it fails with SQLITE_NOMEM, which some objects return intermittently. */
+async function retryOnNoMem<T>(read: () => T, attempts = 6): Promise<T> {
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return read();
+		} catch (e) {
+			if (attempt >= attempts || !String((e as Error).message).includes("SQLITE_NOMEM")) throw e;
+			await scheduler.wait(250 * attempt);
+		}
+	}
+}
+
+/** Every row of a mailbox, as rebuildStorage backs it up to R2 and migrate copies it. */
+export interface MailboxBackup {
 	folders: Record<string, SqlStorageValue>[];
 	emails: Record<string, SqlStorageValue>[];
 	attachments: Record<string, SqlStorageValue>[];
@@ -649,22 +670,61 @@ export class MailboxDO extends DurableObject<Env> {
 		return result;
 	}
 
+	/**
+	 * Every row of this mailbox, for moving it to another object (migrate).
+	 * Read in small statements, one email at a time and each retried on
+	 * SQLITE_NOMEM, so an object that keeps failing larger queries can still
+	 * hand its mail over.
+	 */
+	async exportRows(): Promise<MailboxBackup> {
+		const sql = this.ctx.storage.sql;
+		const folders = await retryOnNoMem(() => sql.exec(`SELECT * FROM folders`).toArray());
+		const rowids = await retryOnNoMem(() =>
+			sql.exec<{ r: number }>(`SELECT rowid AS r FROM emails NOT INDEXED`).toArray().map((row) => row.r),
+		);
+		const emails: Record<string, SqlStorageValue>[] = [];
+		for (const rowid of rowids) {
+			emails.push(await retryOnNoMem(() => sql.exec(`SELECT * FROM emails WHERE rowid = ?`, rowid).one()));
+		}
+		const attachments = await retryOnNoMem(() => sql.exec(`SELECT * FROM attachments NOT INDEXED`).toArray());
+		return { folders, emails, attachments };
+	}
+
+	/**
+	 * Add rows exported from another object (migrate). INSERT OR IGNORE, so
+	 * importing again later adds only what reached the old object meanwhile.
+	 */
+	async importRows(backup: MailboxBackup): Promise<{ folders: number; emails: number; attachments: number }> {
+		const sql = this.ctx.storage.sql;
+		this.ctx.storage.transactionSync(() => {
+			for (const row of backup.folders) insertRow(sql, "folders", row, "INSERT OR IGNORE");
+			for (const row of backup.emails) insertRow(sql, "emails", row, "INSERT OR IGNORE");
+			for (const row of backup.attachments) insertRow(sql, "attachments", row, "INSERT OR IGNORE");
+		});
+		await this.syncBurns();
+		const count = (table: string) => sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
+		return { folders: count("folders"), emails: count("emails"), attachments: count("attachments") };
+	}
+
+	/** The Cloudflare data center this object runs in (from /cdn-cgi/trace), to tell objects apart. */
+	async location(): Promise<string | null> {
+		try {
+			const trace = await (await fetch("https://www.cloudflare.com/cdn-cgi/trace")).text();
+			return trace.match(/^colo=(\w+)$/m)?.[1] ?? null;
+		} catch {
+			return null;
+		}
+	}
+
 	/** Re-create the schema on an empty database and insert the backed-up rows. */
 	private async writeBackup(backup: MailboxBackup, backupKey: string): Promise<MailboxRebuildResult> {
 		const sql = this.ctx.storage.sql;
 		applyMigrations(sql, mailboxMigrations, this.ctx.storage);
-		const insert = (table: string, row: Record<string, SqlStorageValue>, verb = "INSERT") => {
-			const columns = Object.keys(row);
-			sql.exec(
-				`${verb} INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
-				...columns.map((column) => row[column]),
-			);
-		};
 		this.ctx.storage.transactionSync(() => {
 			// The migrations already created the system folders.
-			for (const row of backup.folders) insert("folders", row, "INSERT OR IGNORE");
-			for (const row of backup.emails) insert("emails", row);
-			for (const row of backup.attachments) insert("attachments", row);
+			for (const row of backup.folders) insertRow(sql, "folders", row, "INSERT OR IGNORE");
+			for (const row of backup.emails) insertRow(sql, "emails", row);
+			for (const row of backup.attachments) insertRow(sql, "attachments", row);
 		});
 		const count = (table: string) => sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
 		const result = {

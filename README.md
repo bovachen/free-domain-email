@@ -265,6 +265,16 @@ Token 保存在你自己的 R2 存储桶里；也可以改用 Worker 密钥 `CLO
 
 还没完成第 3 步。应用会强制要求 Cloudflare Access，避免收件箱暴露给互联网上的任何人。
 
+**个别邮箱打不开，日志里是 `out of memory: SQLITE_NOMEM` 或 `internal error`**
+
+「所有收件箱」会跳过出错的邮箱，其他邮箱照常显示。如果某个邮箱一直这样报错，而它的数据并不多（在 Cloudflare 后台 Durable Objects 的 Data Studio 里，同样的只读查询也时好时坏），问题出在这个邮箱所在的 Durable Object 上，可以把邮箱迁到一个新对象（以下接口都在 Access 之后，登录网页后在浏览器控制台里用 `fetch` 调用即可）：
+
+1. `POST /api/v1/mailboxes/<邮箱地址>/migrate`，正文 `{"to": "<邮箱地址>:v2"}`：先把全部数据备份到 R2 的 `backups/mailboxes/<邮箱地址>/`，再复制到新对象，并在新对象上跑一遍收件箱的查询作为检查。原对象保持不动。
+2. 在部署配置的 `vars` 里加上 `"MAILBOX_OBJECTS": {"<邮箱地址>": "<邮箱地址>:v2"}`，重新部署。之后这个邮箱的读写都走新对象。
+3. 再调用一次第 1 步，正文改为 `{"from": "<邮箱地址>", "to": "<邮箱地址>:v2"}`，把切换前到达旧对象的邮件补过去，已经复制过的不会重复。
+
+`GET /api/v1/mailboxes/<邮箱地址>/location` 返回邮箱当前使用的对象，以及它所在的 Cloudflare 数据中心。
+
 **收不到邮件**
 
 - 确认第 4 步的 Catch-all 规则已启用，目标是这个 Worker

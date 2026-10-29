@@ -17,16 +17,31 @@ import { formatQuotedDate } from "../../shared/dates";
 // ── DO Stub ────────────────────────────────────────────────────────
 
 /**
- * Resolve a MailboxDO stub from a mailbox email address.
- * Replaces the repeated 3-line ns.idFromName / ns.get pattern.
+ * The Durable Object that holds a mailbox: the one named after the mailbox,
+ * unless the MAILBOX_OBJECTS deployment var (a JSON object, or a string of
+ * one) maps the mailbox to another object. That is how a mailbox moves off
+ * an object Cloudflare can no longer serve reliably; see
+ * POST /api/v1/mailboxes/:mailboxId/migrate.
  */
+export function mailboxObjectName(env: Env, mailboxId: string): string {
+	let map = env.MAILBOX_OBJECTS;
+	if (typeof map === "string") {
+		try {
+			map = JSON.parse(map) as Record<string, string>;
+		} catch {
+			map = undefined;
+		}
+	}
+	const name = map?.[mailboxId];
+	return typeof name === "string" && name ? name : mailboxId;
+}
+
+/** Resolve a MailboxDO stub from a mailbox email address. Every mailbox lookup goes through here. */
 export function getMailboxStub(
 	env: Env,
 	mailboxId: string,
 ): DurableObjectStub<MailboxDO> {
-	const ns = env.MAILBOX;
-	const id = ns.idFromName(mailboxId);
-	return ns.get(id);
+	return env.MAILBOX.get(env.MAILBOX.idFromName(mailboxObjectName(env, mailboxId)));
 }
 
 // ── Mailbox Listing ────────────────────────────────────────────────

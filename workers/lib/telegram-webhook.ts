@@ -28,6 +28,7 @@ import {
 	buildReferencesChain,
 	buildThreadingHeaders,
 	generateMessageId,
+	getMailboxStub,
 	listMailboxes,
 	textToHtml,
 } from "./email-helpers";
@@ -86,7 +87,7 @@ function parseCallback(data: string | undefined): { action: Action; emailId: str
 
 /** Current folder/flags of the referenced email plus the sender's blacklist state. */
 async function getEmailStatus(env: Env, ref: TelegramMessageRef): Promise<EmailStatus | null> {
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(ref.mailboxId));
+	const stub = getMailboxStub(env, ref.mailboxId);
 	const email = (await stub.getEmail(ref.emailId)) as
 		| { folder_id?: string; read?: boolean; starred?: boolean; sender?: string; retention?: string | null }
 		| null;
@@ -109,7 +110,7 @@ async function getEmailStatus(env: Env, ref: TelegramMessageRef): Promise<EmailS
 async function findRefByEmailId(env: Env, emailId: string): Promise<TelegramMessageRef | null> {
 	const mailboxes = await listMailboxes(env.BUCKET);
 	for (const mailbox of mailboxes) {
-		const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailbox.id));
+		const stub = getMailboxStub(env, mailbox.id);
 		const email = (await stub.getEmail(emailId)) as { sender?: string; subject?: string } | null;
 		if (email) {
 			return { mailboxId: mailbox.id, emailId, sender: email.sender || "", subject: email.subject || "" };
@@ -184,7 +185,7 @@ async function handleCallback(env: Env, settings: TelegramSettings, query: TgCal
 	const ref = await resolveRef(env, settings.chatId, query.message, parsed.emailId);
 	if (!ref) return answer(settings, query.id, "找不到这封邮件，可能已被删除", true);
 
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(ref.mailboxId));
+	const stub = getMailboxStub(env, ref.mailboxId);
 	const refresh = () => updateKeyboard(env, settings, query.message, ref);
 	const move = async (folder: string, okText: string) => {
 		const ok = await stub.moveEmail(ref.emailId, folder);
@@ -270,7 +271,7 @@ async function sendReplyFromTelegram(
 	ref: TelegramMessageRef,
 	text: string,
 ): Promise<{ ok: true; to: string } | { ok: false; error: string }> {
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(ref.mailboxId));
+	const stub = getMailboxStub(env, ref.mailboxId);
 	const original = (await stub.getEmail(ref.emailId)) as EmailFull | null;
 	if (!original) return { ok: false, error: "原邮件不存在，可能已被删除" };
 

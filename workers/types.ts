@@ -11,4 +11,10 @@ export interface Env extends Cloudflare.Env {
 	CLOUDFLARE_API_TOKEN?: string;
 	/** Optional: catch-all target when no existing domain already routes to this Worker. */
 	WORKER_NAME?: string;
+	/**
+	 * Optional: mailbox id → Durable Object name, for mailboxes moved to a new
+	 * object (POST /api/v1/mailboxes/:mailboxId/migrate). Unlisted mailboxes
+	 * use the object named after them.
+	 */
+	MAILBOX_OBJECTS?: Record<string, string> | string;
 }

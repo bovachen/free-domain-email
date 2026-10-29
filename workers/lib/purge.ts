@@ -8,7 +8,7 @@
 
 import { getAgentByName } from "agents";
 import type { Env } from "../types";
-import { listMailboxes } from "./email-helpers";
+import { getMailboxStub, listMailboxes } from "./email-helpers";
 import type { TelegramMessageRef } from "./telegram";
 
 const MAILBOXES_PER_BATCH = 20;
@@ -22,7 +22,7 @@ const TELEGRAM_REFS_PREFIX = "telegram/messages/";
  */
 export async function purgeMailbox(env: Env, mailboxId: string): Promise<void> {
 	await env.BUCKET.delete(`mailboxes/${mailboxId}.json`);
-	const mailbox = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	const mailbox = getMailboxStub(env, mailboxId);
 	await mailbox.purge();
 	// getAgentByName sets the agent's name; a plain stub would be rejected by the Agents SDK.
 	const agent = await getAgentByName(env.EMAIL_AGENT, mailboxId);

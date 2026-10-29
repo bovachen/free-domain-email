@@ -7,7 +7,7 @@
 
 import { type BlockTarget, matchBlockRule, parseBlockTarget } from "../../shared/sender";
 import { BURN_TIME_LIMITS, type BurnTimes, DEFAULT_BURN_TIMES } from "../../shared/burn";
-import { listMailboxes } from "./email-helpers";
+import { getMailboxStub, listMailboxes } from "./email-helpers";
 import type { Env } from "../types";
 
 const SETTINGS_KEY = "settings/burn.json";
@@ -116,7 +116,7 @@ export async function removeKeepEntries(bucket: R2Bucket, keys: string[]): Promi
 export async function keepMatchingMail(env: Env, target: BlockTarget): Promise<void> {
 	const mailboxes = await listMailboxes(env.BUCKET);
 	await Promise.all(
-		mailboxes.map((mailbox) => env.MAILBOX.get(env.MAILBOX.idFromName(mailbox.id)).keepFrom(target)),
+		mailboxes.map((mailbox) => getMailboxStub(env, mailbox.id).keepFrom(target)),
 	);
 }
 
@@ -124,6 +124,6 @@ export async function keepMatchingMail(env: Env, target: BlockTarget): Promise<v
 export async function resyncBurns(env: Env): Promise<void> {
 	const mailboxes = await listMailboxes(env.BUCKET);
 	await Promise.all(
-		mailboxes.map((mailbox) => env.MAILBOX.get(env.MAILBOX.idFromName(mailbox.id)).syncBurns()),
+		mailboxes.map((mailbox) => getMailboxStub(env, mailbox.id).syncBurns()),
 	);
 }

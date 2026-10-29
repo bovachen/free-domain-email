@@ -15,7 +15,9 @@ import {
 	SenderValidationError,
 	generateMessageId,
 	buildThreadingHeaders,
+	getMailboxStub,
 	listMailboxes,
+	mailboxObjectName,
 	stripHtmlToText,
 } from "./lib/email-helpers";
 import {
@@ -80,6 +82,7 @@ import { Folders } from "../shared/folders";
 import { domainMatches, senderDomain } from "../shared/sender";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
+import type { MailboxBackup } from "./durableObject";
 
 type AppContext = Context<MailboxContext>;
 
@@ -431,7 +434,7 @@ async function loadMiniAppEmail(c: AppContext) {
 	if (!mailboxId || !emailId || !(await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`))) {
 		return { error: c.json({ error: "邮箱不存在" }, 404) };
 	}
-	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(mailboxId));
+	const stub = getMailboxStub(c.env, mailboxId);
 	const email = await stub.getEmail(emailId);
 	if (!email) return { error: c.json({ error: "邮件不存在，可能已被删除" }, 404) };
 	return { body, settings, stub, email };
@@ -532,7 +535,7 @@ app.get("/api/v1/unified/folders", async (c) => {
 	const totals: Record<string, number> = {};
 	await Promise.all(
 		mailboxes.map(async (m) => {
-			const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(m.id));
+			const stub = getMailboxStub(c.env, m.id);
 			try {
 				const folders = await stub.getFolders();
 				for (const folder of folders as { id: string; unreadCount: number }[]) {
@@ -556,7 +559,7 @@ app.get("/api/v1/unified/emails", async (c) => {
 
 	const batches = await Promise.all(
 		mailboxes.map(async (m) => {
-			const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(m.id));
+			const stub = getMailboxStub(c.env, m.id);
 			try {
 				const emails = await (stub as any).getThreadedEmails({ folder, page: 1, limit: perBox });
 				const totalCount = await (stub as any).countThreadedEmails(folder);
@@ -602,7 +605,7 @@ app.post("/api/v1/mailboxes", async (c) => {
 	const defaultSettings = { fromName: name, forwarding: { enabled: false, email: "" }, signature: { enabled: false, text: "" }, autoReply: { enabled: false, subject: "", message: "" } };
 	const finalSettings = { ...defaultSettings, ...settings };
 	await c.env.BUCKET.put(key, JSON.stringify(finalSettings));
-	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(email));
+	const stub = getMailboxStub(c.env, email);
 	await stub.getFolders();
 	return c.json({ id: email, email, name, settings: finalSettings }, 201);
 });
@@ -649,6 +652,64 @@ app.post("/api/v1/mailboxes/:mailboxId/rebuild", async (c: AppContext) => {
 	} catch (e) {
 		return c.json({ error: (e as Error).message }, 500);
 	}
+});
+
+// The Cloudflare data center a mailbox's object runs in.
+app.get("/api/v1/mailboxes/:mailboxId/location", async (c: AppContext) => {
+	const mailboxId = decodeURIComponent(c.req.param("mailboxId")!);
+	return c.json({ object: mailboxObjectName(c.env, mailboxId), colo: await c.var.mailboxStub.location() });
+});
+
+// Move a mailbox to another Durable Object, for an object Cloudflare can no
+// longer serve reliably: every row of `from` (default: the object the mailbox
+// uses now) is backed up to R2 and copied into `to`, whose list queries are
+// then run as a check. The old object is left as it is. Point the mailbox at
+// `to` with the MAILBOX_OBJECTS var afterwards; running this again copies
+// whatever reached the old object in between (rows already there are kept).
+app.post("/api/v1/mailboxes/:mailboxId/migrate", async (c: AppContext) => {
+	const mailboxId = decodeURIComponent(c.req.param("mailboxId")!);
+	const body = (await c.req.json().catch(() => ({}))) as { from?: string; to?: string };
+	const from = body.from?.trim() || mailboxObjectName(c.env, mailboxId);
+	const to = body.to?.trim();
+	if (!to || to === from || to.length > 200) return c.json({ error: "需要一个和原对象不同的新对象名 to" }, 400);
+	const source = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(from));
+	const target = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(to));
+
+	// The old object may fail a call with SQLITE_NOMEM or an internal error; give the export a few tries.
+	let backup: MailboxBackup | null = null;
+	let lastError = "";
+	for (let attempt = 1; attempt <= 5 && !backup; attempt++) {
+		try {
+			backup = (await source.exportRows()) as MailboxBackup;
+		} catch (e) {
+			lastError = (e as Error).message;
+			await scheduler.wait(2000);
+		}
+	}
+	if (!backup) return c.json({ error: `读取原对象失败：${lastError}` }, 502);
+	const backupKey = `backups/mailboxes/${mailboxId}/${new Date().toISOString()}-migrate.json`;
+	await c.env.BUCKET.put(backupKey, JSON.stringify(backup));
+
+	const imported = await target.importRows(backup);
+	if (imported.emails < backup.emails.length || imported.attachments < backup.attachments.length) {
+		return c.json({ error: `新对象只有 ${imported.emails}/${backup.emails.length} 封邮件，备份在 ${backupKey}` }, 500);
+	}
+	// The queries the inbox runs, against the new object.
+	const check = {
+		threaded: ((await (target as any).getThreadedEmails({ folder: Folders.INBOX, limit: 100 })) as unknown[]).length,
+		flat: ((await (target as any).getEmails({ folder: Folders.INBOX, limit: 100 })) as unknown[]).length,
+		folders: ((await target.getFolders()) as unknown[]).length,
+	};
+	return c.json({
+		mailboxId,
+		from,
+		to,
+		backupKey,
+		exported: { folders: backup.folders.length, emails: backup.emails.length, attachments: backup.attachments.length },
+		imported,
+		check,
+		colo: { from: await source.location().catch(() => null), to: await target.location() },
+	});
 });
 
 // -- Emails ---------------------------------------------------------
@@ -947,7 +1008,7 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 	const messageId = crypto.randomUUID();
 	if (!(await env.BUCKET.head(`mailboxes/${mailboxId}.json`))) { console.log(`Ignoring email for ${mailboxId}: mailbox does not exist`); return; }
 
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	const stub = getMailboxStub(env, mailboxId);
 
 	const attachmentData: StoredAttachment[] = [];
 	if (parsedEmail.attachments) {

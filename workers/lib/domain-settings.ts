@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import type { Env } from "../types";
+import { getMailboxStub } from "./email-helpers";
 
 const WILDCARD_KEY = "settings/wildcard.json";
 const DOMAINS_KEY = "settings/domains.json";
@@ -110,6 +111,6 @@ export async function ensureMailbox(env: Env, email: string): Promise<void> {
 		autoReply: { enabled: false, subject: "", message: "" },
 	};
 	await env.BUCKET.put(key, JSON.stringify(defaultSettings));
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	const stub = getMailboxStub(env, mailboxId);
 	await stub.getFolders();
 }

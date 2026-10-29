@@ -10,6 +10,7 @@
 import { createMiddleware } from "hono/factory";
 import type { MailboxDO } from "../durableObject";
 import type { Env } from "../types";
+import { getMailboxStub } from "./email-helpers";
 
 export type MailboxContext = {
 	Bindings: Env;
@@ -30,12 +31,7 @@ export const requireMailbox = createMiddleware<MailboxContext>(async (c, next) =
 		return c.json({ error: "邮箱不存在" }, 404);
 	}
 
-	// Instantiate DO stub
-	const ns = c.env.MAILBOX;
-	const id = ns.idFromName(mailboxId);
-	const stub = ns.get(id);
-
-	c.set("mailboxStub", stub);
+	c.set("mailboxStub", getMailboxStub(c.env, mailboxId));
 	
 	await next();
 });

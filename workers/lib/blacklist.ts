@@ -13,7 +13,7 @@ import {
 	parseBlockTarget,
 	senderDomain,
 } from "../../shared/sender";
-import { listMailboxes } from "./email-helpers";
+import { getMailboxStub, listMailboxes } from "./email-helpers";
 import type { Env } from "../types";
 
 const SETTINGS_KEY = "settings/blacklist.json";
@@ -173,7 +173,7 @@ export async function moveBlockedToSpam(env: Env, target: BlockTarget): Promise<
 	const mailboxes = await listMailboxes(env.BUCKET);
 	await Promise.all(
 		mailboxes.map(async (mailbox) => {
-			const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailbox.id));
+			const stub = getMailboxStub(env, mailbox.id);
 			if (target.type === "domain") await stub.moveEmailsFromDomain(target.value, Folders.SPAM);
 			else await stub.moveEmailsFromSender(target.value, Folders.SPAM);
 		}),
@@ -234,7 +234,7 @@ export async function reportEmailAsSpam(
 		return { error: "邮箱不存在", status: 404 };
 	}
 
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	const stub = getMailboxStub(env, mailboxId);
 	const email = (await stub.getEmail(emailId)) as { sender?: string } | null;
 	if (!email) return { error: "邮件不存在", status: 404 };
 
@@ -271,7 +271,7 @@ export async function markEmailNotSpam(
 	mailboxId: string,
 	emailId: string,
 ): Promise<{ status: "moved"; trusted: string | null; blockedBy: BlacklistEntry | null } | { error: string; status: number }> {
-	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(mailboxId));
+	const stub = getMailboxStub(env, mailboxId);
 	const email = (await stub.getEmail(emailId)) as { sender?: string } | null;
 	if (!email) return { error: "邮件不存在", status: 404 };
 	await stub.moveEmail(emailId, Folders.INBOX);

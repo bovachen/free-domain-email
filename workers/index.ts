@@ -631,6 +631,26 @@ app.delete("/api/v1/mailboxes/:mailboxId", async (c) => {
 	return c.body(null, 204);
 });
 
+// Rebuild a mailbox whose database fails with SQLITE_NOMEM (MailboxDO.rebuildStorage):
+// POST {} backs it up to R2 and rebuilds it; POST { restoreFrom } writes one of
+// its earlier backups back, for a rebuild that failed after the wipe.
+app.post("/api/v1/mailboxes/:mailboxId/rebuild", async (c: AppContext) => {
+	const mailboxId = decodeURIComponent(c.req.param("mailboxId")!);
+	const prefix = `backups/mailboxes/${mailboxId}/`;
+	const body = (await c.req.json().catch(() => ({}))) as { restoreFrom?: string };
+	if (body.restoreFrom && !body.restoreFrom.startsWith(prefix)) {
+		return c.json({ error: `只能恢复 ${prefix} 下的备份` }, 400);
+	}
+	try {
+		const result = body.restoreFrom
+			? await c.var.mailboxStub.restoreFromBackup(body.restoreFrom)
+			: await c.var.mailboxStub.rebuildStorage(`${prefix}${new Date().toISOString()}.json`);
+		return c.json(result);
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 500);
+	}
+});
+
 // -- Emails ---------------------------------------------------------
 
 app.get("/api/v1/mailboxes/:mailboxId/emails", async (c: AppContext) => {

@@ -94,6 +94,20 @@ interface EmailData {
 	retention?: string | null;
 }
 
+/** Every row of a mailbox, as rebuildStorage backs it up to R2. */
+interface MailboxBackup {
+	folders: Record<string, SqlStorageValue>[];
+	emails: Record<string, SqlStorageValue>[];
+	attachments: Record<string, SqlStorageValue>[];
+}
+
+export interface MailboxRebuildResult {
+	backupKey: string;
+	folders: number;
+	emails: number;
+	attachments: number;
+}
+
 interface AttachmentData {
 	id: string;
 	email_id: string;
@@ -590,6 +604,82 @@ export class MailboxDO extends DurableObject<Env> {
 		await this.ctx.storage.deleteAll();
 		setTimeout(() => this.ctx.abort("purged"), 0);
 		return { attachments: keys.length };
+	}
+
+	/**
+	 * Rebuild this mailbox's database from its own rows, for a mailbox whose
+	 * queries fail with SQLITE_NOMEM although its rows still read fine with a
+	 * plain table scan. Every row is read (emails NOT INDEXED, so no index is
+	 * involved), the backup is written to R2 and checked, and only then is
+	 * the storage wiped, the schema re-created by the migrations and the rows
+	 * written back in one transaction. Attachment blobs in R2 are untouched.
+	 * Everything is held in memory, so this is for small mailboxes.
+	 */
+	async rebuildStorage(backupKey: string): Promise<MailboxRebuildResult> {
+		const sql = this.ctx.storage.sql;
+		const backup: MailboxBackup = {
+			folders: sql.exec(`SELECT * FROM folders`).toArray(),
+			emails: sql.exec(`SELECT * FROM emails NOT INDEXED`).toArray(),
+			attachments: sql.exec(`SELECT * FROM attachments NOT INDEXED`).toArray(),
+		};
+		const body = JSON.stringify(backup);
+		await this.env.BUCKET.put(backupKey, body);
+		const stored = await this.env.BUCKET.head(backupKey);
+		if (!stored || stored.size !== new TextEncoder().encode(body).byteLength) {
+			throw new Error(`Backup ${backupKey} did not land in R2; nothing was deleted`);
+		}
+
+		await this.ctx.storage.deleteAlarm();
+		await this.ctx.storage.deleteAll();
+		const result = await this.writeBackup(backup, backupKey);
+		// Start the next call from a fresh instance on the rebuilt database.
+		setTimeout(() => this.ctx.abort("rebuilt"), 0);
+		return result;
+	}
+
+	/** Write a backup from rebuildStorage back, e.g. when a rebuild failed after the wipe. */
+	async restoreFromBackup(backupKey: string): Promise<MailboxRebuildResult> {
+		const obj = await this.env.BUCKET.get(backupKey);
+		if (!obj) throw new Error(`Backup ${backupKey} not found`);
+		const backup = (await obj.json()) as MailboxBackup;
+		await this.ctx.storage.deleteAlarm();
+		await this.ctx.storage.deleteAll();
+		const result = await this.writeBackup(backup, backupKey);
+		setTimeout(() => this.ctx.abort("restored"), 0);
+		return result;
+	}
+
+	/** Re-create the schema on an empty database and insert the backed-up rows. */
+	private async writeBackup(backup: MailboxBackup, backupKey: string): Promise<MailboxRebuildResult> {
+		const sql = this.ctx.storage.sql;
+		applyMigrations(sql, mailboxMigrations, this.ctx.storage);
+		const insert = (table: string, row: Record<string, SqlStorageValue>, verb = "INSERT") => {
+			const columns = Object.keys(row);
+			sql.exec(
+				`${verb} INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+				...columns.map((column) => row[column]),
+			);
+		};
+		this.ctx.storage.transactionSync(() => {
+			// The migrations already created the system folders.
+			for (const row of backup.folders) insert("folders", row, "INSERT OR IGNORE");
+			for (const row of backup.emails) insert("emails", row);
+			for (const row of backup.attachments) insert("attachments", row);
+		});
+		const count = (table: string) => sql.exec<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table}`).one().n;
+		const result = {
+			backupKey,
+			folders: count("folders"),
+			emails: count("emails"),
+			attachments: count("attachments"),
+		};
+		if (result.emails !== backup.emails.length || result.attachments !== backup.attachments.length) {
+			throw new Error(
+				`Rebuilt ${result.emails}/${backup.emails.length} emails and ${result.attachments}/${backup.attachments.length} attachments; the backup is in R2 at ${backupKey}`,
+			);
+		}
+		await this.syncBurns();
+		return result;
 	}
 
 	async getAttachment(id: string) {

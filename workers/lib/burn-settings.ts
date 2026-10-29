@@ -17,6 +17,8 @@ export interface KeepEntry {
 	address: string;
 	type: "address" | "domain";
 	createdAt: string;
+	/** Where it was added from; missing when typed into the list itself. */
+	source?: "telegram" | "reader";
 }
 
 export interface BurnSettings extends BurnTimes {
@@ -63,23 +65,49 @@ export function isKeptSender(settings: BurnSettings, sender: string): boolean {
 	return Boolean(matchBlockRule(settings.keep, sender));
 }
 
-export async function addKeepEntry(bucket: R2Bucket, input: string): Promise<{ settings: BurnSettings; target: BlockTarget }> {
-	const target = parseBlockTarget(input);
-	if (!target) throw new Error("请输入有效的邮箱地址或域名");
+const sameEntry = (entry: KeepEntry, target: BlockTarget) => entry.address === target.value && entry.type === target.type;
+
+/** Add addresses or domains in one write; unparsable inputs come back in `errors`. */
+export async function addKeepEntries(
+	bucket: R2Bucket,
+	inputs: string[],
+	source?: KeepEntry["source"],
+): Promise<{ settings: BurnSettings; added: BlockTarget[]; errors: { input: string; error: string }[] }> {
+	const added: BlockTarget[] = [];
+	const errors: { input: string; error: string }[] = [];
+	for (const input of inputs) {
+		const target = parseBlockTarget(input);
+		if (!target) errors.push({ input, error: "请输入有效的邮箱地址或域名" });
+		else if (!added.some((t) => t.type === target.type && t.value === target.value)) added.push(target);
+	}
 	const settings = await getBurnSettings(bucket);
+	if (added.length === 0) return { settings, added, errors };
+	const createdAt = new Date().toISOString();
 	settings.keep = [
-		{ address: target.value, type: target.type, createdAt: new Date().toISOString() },
-		...settings.keep.filter((entry) => !(entry.address === target.value && entry.type === target.type)),
+		...added.map((target) => ({ address: target.value, type: target.type, createdAt, ...(source ? { source } : {}) })),
+		...settings.keep.filter((entry) => !added.some((target) => sameEntry(entry, target))),
 	];
-	return { settings: await saveBurnSettings(bucket, settings), target };
+	return { settings: await saveBurnSettings(bucket, settings), added, errors };
 }
 
-export async function removeKeepEntry(bucket: R2Bucket, input: string): Promise<BurnSettings> {
-	const target = parseBlockTarget(input);
-	const raw = input.trim().toLowerCase();
+/** Add one address or domain; throws when it isn't one. */
+export async function addKeepEntry(
+	bucket: R2Bucket,
+	input: string,
+	source?: KeepEntry["source"],
+): Promise<{ settings: BurnSettings; target: BlockTarget }> {
+	const { settings, added, errors } = await addKeepEntries(bucket, [input], source);
+	if (errors.length > 0) throw new Error(errors[0].error);
+	return { settings, target: added[0] };
+}
+
+/** Remove entries; each key is an address or domain as stored. */
+export async function removeKeepEntries(bucket: R2Bucket, keys: string[]): Promise<BurnSettings> {
+	const targets = keys.map((key) => parseBlockTarget(key));
+	const raws = keys.map((key) => key.trim().toLowerCase());
 	const settings = await getBurnSettings(bucket);
-	settings.keep = settings.keep.filter((entry) =>
-		target ? !(entry.address === target.value && entry.type === target.type) : entry.address !== raw,
+	settings.keep = settings.keep.filter(
+		(entry) => !targets.some((target, i) => (target ? sameEntry(entry, target) : entry.address === raws[i])),
 	);
 	return saveBurnSettings(bucket, settings);
 }

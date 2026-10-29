@@ -114,6 +114,14 @@ export interface KeepEntry {
 	address: string;
 	type: "address" | "domain";
 	createdAt: string;
+	/** Where it was added from; missing when typed into the list itself. */
+	source?: "telegram" | "reader";
+}
+
+/** An entry a batch add could not take, with the reason. */
+export interface ListInputError {
+	input: string;
+	error: string;
 }
 
 export interface BurnSettings {
@@ -177,9 +185,10 @@ const api = {
 		put<AutoDraftSettings>("/api/v1/settings/auto-draft", patch),
 	getBurnSettings: () => get<BurnSettings>("/api/v1/settings/burn"),
 	updateBurnSettings: (patch: BurnSettingsPatch) => put<BurnSettings>("/api/v1/settings/burn", patch),
-	addKeepEntry: (address: string) => post<BurnSettings>("/api/v1/settings/burn/keep", { address }),
-	removeKeepEntry: (address: string) =>
-		request<BurnSettings>("/api/v1/settings/burn/keep", { method: "DELETE", body: JSON.stringify({ address }) }),
+	addKeepEntries: (addresses: string[], source?: KeepEntry["source"]) =>
+		post<BurnSettings & { errors: ListInputError[] }>("/api/v1/settings/burn/keep", { addresses, source }),
+	removeKeepEntries: (addresses: string[]) =>
+		request<BurnSettings>("/api/v1/settings/burn/keep", { method: "DELETE", body: JSON.stringify({ addresses }) }),
 	getCloudflareSettings: () => get<CloudflareSettings>("/api/v1/settings/cloudflare"),
 	saveCloudflareToken: (apiToken: string) =>
 		put<CloudflareSettings>("/api/v1/settings/cloudflare", { apiToken }),
@@ -204,12 +213,12 @@ const api = {
 	unregisterTelegramWebhook: () =>
 		request<TelegramSettings>("/api/v1/settings/telegram/webhook", { method: "DELETE" }),
 	getBlacklist: () => get<{ entries: BlacklistEntry[] }>("/api/v1/settings/blacklist"),
-	addToBlacklist: (address: string) =>
-		post<{ entries: BlacklistEntry[] }>("/api/v1/settings/blacklist", { address }),
-	removeFromBlacklist: (address: string) =>
+	addToBlacklist: (addresses: string[]) =>
+		post<{ entries: BlacklistEntry[]; errors: ListInputError[] }>("/api/v1/settings/blacklist", { addresses }),
+	removeFromBlacklist: (addresses: string[]) =>
 		request<{ entries: BlacklistEntry[] }>("/api/v1/settings/blacklist", {
 			method: "DELETE",
-			body: JSON.stringify({ address }),
+			body: JSON.stringify({ addresses }),
 		}),
 	reportSpam: (mailboxId: string, emailId: string, scope: "address" | "domain" = "address") =>
 		post<{ status: string; sender: string | null; blocked: boolean; domain?: string }>(

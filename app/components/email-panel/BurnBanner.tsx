@@ -5,7 +5,7 @@
 import { Button, useKumoToastManager } from "@cloudflare/kumo";
 import { Folders } from "shared/folders";
 import { burnNotice, formatTimeLeft } from "shared/burn";
-import { useAddKeepEntry, useBurnSettings } from "~/queries/mailboxes";
+import { useAddKeepEntries, useBurnSettings } from "~/queries/mailboxes";
 import type { Email } from "~/types";
 
 interface BurnBannerProps {
@@ -19,7 +19,7 @@ interface BurnBannerProps {
  */
 export default function BurnBanner({ email, onToggleStar }: BurnBannerProps) {
 	const { data: settings } = useBurnSettings();
-	const addKeepEntry = useAddKeepEntry();
+	const addKeepEntries = useAddKeepEntries();
 	const toastManager = useKumoToastManager();
 
 	if (!settings?.enabled || email.folder_id !== Folders.INBOX) return null;
@@ -36,7 +36,8 @@ export default function BurnBanner({ email, onToggleStar }: BurnBannerProps) {
 
 	const handleKeepSender = async () => {
 		try {
-			await addKeepEntry.mutateAsync(email.sender);
+			const { errors } = await addKeepEntries.mutateAsync({ addresses: [email.sender], source: "reader" });
+			if (errors.length > 0) throw new Error(errors[0].error);
 			toastManager.add({ title: `已把 ${email.sender} 加入永久保留名单` });
 		} catch (err) {
 			toastManager.add({ title: err instanceof Error ? err.message : "保存失败", variant: "error" });
@@ -55,7 +56,7 @@ export default function BurnBanner({ email, onToggleStar }: BurnBannerProps) {
 					<Button size="sm" variant="primary" onClick={onToggleStar}>
 						保留
 					</Button>
-					<Button size="sm" variant="secondary" disabled={addKeepEntry.isPending} onClick={() => void handleKeepSender()}>
+					<Button size="sm" variant="secondary" disabled={addKeepEntries.isPending} onClick={() => void handleKeepSender()}>
 						以后都保留此发件人
 					</Button>
 				</>

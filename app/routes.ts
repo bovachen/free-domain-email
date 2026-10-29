@@ -13,6 +13,7 @@ export default [
 	route("mail", "routes/mail-layout.tsx", [
 		route("emails/:folder", "routes/email-list.tsx", { id: "mail-unified-list" }),
 		route("search", "routes/search-results.tsx", { id: "mail-unified-search" }),
+		route("senders", "routes/sender-lists.tsx", { id: "mail-sender-lists" }),
 		route("mailbox/:mailboxId/emails/:folder", "routes/email-list.tsx", { id: "mail-account-list" }),
 		route("mailbox/:mailboxId/settings", "routes/settings.tsx", { id: "mail-account-settings" }),
 		route("mailbox/:mailboxId/search", "routes/search-results.tsx", { id: "mail-account-search" }),

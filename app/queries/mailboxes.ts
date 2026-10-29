@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import api, { type AutoDraftSettings, type BurnSettings, type BurnSettingsPatch } from "~/services/api";
+import api, { type AutoDraftSettings, type BurnSettings, type BurnSettingsPatch, type KeepEntry } from "~/services/api";
 import type { BlacklistEntry, Mailbox } from "~/types";
 import { queryKeys } from "./keys";
 
@@ -103,22 +103,23 @@ export function useUpdateBurnSettings() {
 	});
 }
 
-export function useAddKeepEntry() {
+export function useAddKeepEntries() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (address: string) => api.addKeepEntry(address),
-		onSuccess: (data) => {
-			qc.setQueryData(queryKeys.burn, data);
+		mutationFn: ({ addresses, source }: { addresses: string[]; source?: KeepEntry["source"] }) =>
+			api.addKeepEntries(addresses, source),
+		onSuccess: ({ errors: _errors, ...settings }) => {
+			qc.setQueryData(queryKeys.burn, settings);
 			// Matching mail stops burning; the reader's banner reads the email's retention.
 			qc.invalidateQueries({ queryKey: ["emails"] });
 		},
 	});
 }
 
-export function useRemoveKeepEntry() {
+export function useRemoveKeepEntries() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (address: string) => api.removeKeepEntry(address),
+		mutationFn: (addresses: string[]) => api.removeKeepEntries(addresses),
 		onSuccess: (data) => {
 			qc.setQueryData(queryKeys.burn, data);
 		},
@@ -154,9 +155,9 @@ export function useBlacklist() {
 export function useAddToBlacklist() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (address: string) => api.addToBlacklist(address),
-		onSuccess: (data) => {
-			qc.setQueryData(queryKeys.blacklist, data);
+		mutationFn: (addresses: string[]) => api.addToBlacklist(addresses),
+		onSuccess: ({ entries }) => {
+			qc.setQueryData(queryKeys.blacklist, { entries });
 			qc.invalidateQueries({ queryKey: ["emails"] });
 			qc.invalidateQueries({ queryKey: ["unified-emails"] });
 			qc.invalidateQueries({ queryKey: queryKeys.unified.folders });
@@ -167,7 +168,7 @@ export function useAddToBlacklist() {
 export function useRemoveFromBlacklist() {
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (address: string) => api.removeFromBlacklist(address),
+		mutationFn: (addresses: string[]) => api.removeFromBlacklist(addresses),
 		onSuccess: (data) => {
 			qc.setQueryData(queryKeys.blacklist, data);
 		},

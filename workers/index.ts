@@ -37,23 +37,24 @@ import {
 import { purgeDomainData, purgeMailbox } from "./lib/purge";
 import { burnNotice, classifyRetention, type Retention } from "../shared/burn";
 import {
+	addKeepEntries,
 	addKeepEntry,
 	type BurnSettings,
 	getBurnSettings,
 	isKeptSender,
 	keepMatchingMail,
-	removeKeepEntry,
+	removeKeepEntries,
 	resyncBurns,
 	updateBurnSettings,
 } from "./lib/burn-settings";
 import {
-	addToBlacklist,
+	addManyToBlacklist,
 	findBlacklistMatch,
 	getBlacklist,
 	isTrustedSender,
 	markEmailNotSpam,
 	moveBlockedToSpam,
-	removeFromBlacklist,
+	removeManyFromBlacklist,
 	reportEmailAsSpam,
 } from "./lib/blacklist";
 import { checkInboundSpam, extractLinkHosts, SPAM_HEADER } from "./lib/spam-filter";
@@ -76,7 +77,7 @@ import { getPollHeartbeat, handleTelegramUpdate, type TelegramUpdate } from "./l
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
-import { domainMatches, parseBlockTarget, senderDomain } from "../shared/sender";
+import { domainMatches, senderDomain } from "../shared/sender";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 
@@ -192,23 +193,34 @@ app.put("/api/v1/settings/burn", async (c) => {
 	}
 });
 
+/**
+ * The keep list and blacklist routes take one `address` or a batch of
+ * `addresses` (the 发件人名单 page). A single address that can't be added
+ * fails the request; a batch adds what it can and lists the rest in `errors`.
+ */
+type ListRequest = { address?: string; addresses?: string[]; source?: "telegram" | "reader" };
+
+function listInputs(body: ListRequest): string[] {
+	return (body.addresses ?? (body.address !== undefined ? [body.address] : [])).filter((s) => typeof s === "string");
+}
+
 app.post("/api/v1/settings/burn/keep", async (c) => {
-	const body = (await c.req.json()) as { address?: string };
-	try {
-		const { settings, target } = await addKeepEntry(c.env.BUCKET, body.address || "");
-		c.executionCtx.waitUntil(
-			keepMatchingMail(c.env, target).catch((e) => console.error("Burn keep failed:", (e as Error).message)),
-		);
-		return c.json(settings);
-	} catch (e) {
-		return c.json({ error: (e as Error).message }, 400);
-	}
+	const body = (await c.req.json()) as ListRequest;
+	const source = body.source === "telegram" || body.source === "reader" ? body.source : undefined;
+	const { settings, added, errors } = await addKeepEntries(c.env.BUCKET, listInputs(body), source);
+	if (!body.addresses && errors.length > 0) return c.json({ error: errors[0].error }, 400);
+	c.executionCtx.waitUntil(
+		Promise.all(added.map((target) => keepMatchingMail(c.env, target))).catch((e) =>
+			console.error("Burn keep failed:", (e as Error).message),
+		),
+	);
+	return c.json({ ...settings, errors });
 });
 
 app.delete("/api/v1/settings/burn/keep", async (c) => {
-	const body = (await c.req.json()) as { address?: string };
-	if (!body.address) return c.json({ error: "缺少邮箱地址或域名" }, 400);
-	return c.json(await removeKeepEntry(c.env.BUCKET, body.address));
+	const keys = listInputs((await c.req.json()) as ListRequest);
+	if (keys.length === 0) return c.json({ error: "缺少邮箱地址或域名" }, 400);
+	return c.json(await removeKeepEntries(c.env.BUCKET, keys));
 });
 
 app.get("/api/v1/settings/cloudflare", async (c) => {
@@ -456,7 +468,7 @@ app.post(`${TELEGRAM_APP_PATH}/keep`, async (c: AppContext) => {
 	let updated = email;
 	if (body.action === "sender") {
 		try {
-			const { target } = await addKeepEntry(c.env.BUCKET, email.sender || "");
+			const { target } = await addKeepEntry(c.env.BUCKET, email.sender || "", "telegram");
 			await keepMatchingMail(c.env, target);
 		} catch (e) {
 			return c.json({ error: (e as Error).message }, 400);
@@ -497,27 +509,21 @@ app.get("/api/v1/settings/blacklist", async (c) => {
 });
 
 app.post("/api/v1/settings/blacklist", async (c) => {
-	const body = (await c.req.json()) as { address?: string };
-	try {
-		const entries = await addToBlacklist(c.env.BUCKET, { address: body.address || "" });
-		const target = parseBlockTarget(body.address || "");
-		if (target) {
-			c.executionCtx.waitUntil(
-				moveBlockedToSpam(c.env, target).catch((e) =>
-					console.error("Failed to move blacklisted mail to spam:", (e as Error).message),
-				),
-			);
-		}
-		return c.json({ entries });
-	} catch (e) {
-		return c.json({ error: (e as Error).message }, 400);
-	}
+	const body = (await c.req.json()) as ListRequest;
+	const { entries, added, errors } = await addManyToBlacklist(c.env.BUCKET, listInputs(body));
+	if (!body.addresses && errors.length > 0) return c.json({ error: errors[0].error }, 400);
+	c.executionCtx.waitUntil(
+		Promise.all(added.map((target) => moveBlockedToSpam(c.env, target))).catch((e) =>
+			console.error("Failed to move blacklisted mail to spam:", (e as Error).message),
+		),
+	);
+	return c.json({ entries, errors });
 });
 
 app.delete("/api/v1/settings/blacklist", async (c) => {
-	const body = (await c.req.json()) as { address?: string };
-	if (!body.address) return c.json({ error: "缺少邮箱地址或域名" }, 400);
-	const entries = await removeFromBlacklist(c.env.BUCKET, body.address);
+	const keys = listInputs((await c.req.json()) as ListRequest);
+	if (keys.length === 0) return c.json({ error: "缺少邮箱地址或域名" }, 400);
+	const entries = await removeManyFromBlacklist(c.env.BUCKET, keys);
 	return c.json({ entries });
 });
 

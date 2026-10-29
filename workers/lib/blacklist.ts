@@ -59,53 +59,103 @@ export async function isBlacklisted(bucket: R2Bucket, sender: string): Promise<b
 	return Boolean(await findBlacklistMatch(bucket, sender));
 }
 
-/** Why `domain` must not be blocked as a whole, or null when it may be. */
-export async function domainBlockError(bucket: R2Bucket, domain: string): Promise<string | null> {
+async function ownMailboxHosts(bucket: R2Bucket): Promise<string[]> {
+	return (await listMailboxes(bucket)).map((m) => senderDomain(m.id)).filter(Boolean);
+}
+
+function domainBlockReason(domain: string, ownHosts: string[]): string | null {
 	if (isFreemailDomain(domain)) {
 		return `${domain} 是公共邮箱，整域拉黑会挡掉所有用它的人，请只拉黑单个地址`;
 	}
-	const own = (await listMailboxes(bucket)).map((m) => senderDomain(m.id));
-	if (own.some((host) => host && domainMatches(host, domain))) {
+	if (ownHosts.some((host) => domainMatches(host, domain))) {
 		return `${domain} 是你自己的邮箱域名，不能拉黑`;
 	}
 	return null;
 }
 
-/** Block an address (`spam@example.com`) or a whole domain (`example.com` / `@example.com`). */
+/** Why `domain` must not be blocked as a whole, or null when it may be. */
+export async function domainBlockError(bucket: R2Bucket, domain: string): Promise<string | null> {
+	return domainBlockReason(domain, await ownMailboxHosts(bucket));
+}
+
+/** An input a bulk add could not take, with the reason shown next to it. */
+export interface ListInputError {
+	input: string;
+	error: string;
+}
+
+/**
+ * Block addresses (`spam@example.com`) or whole domains (`example.com` /
+ * `@example.com`) in one write. Inputs that can't be blocked come back in
+ * `errors`; the rest are in `added`.
+ */
+export async function addManyToBlacklist(
+	bucket: R2Bucket,
+	inputs: string[],
+	meta: { reason?: string; mailboxId?: string } = {},
+): Promise<{ entries: BlacklistEntry[]; added: BlockTarget[]; errors: ListInputError[] }> {
+	const added: BlockTarget[] = [];
+	const errors: ListInputError[] = [];
+	let ownHosts: string[] | null = null;
+	for (const input of inputs) {
+		const target = parseBlockTarget(input);
+		if (!target) {
+			errors.push({ input, error: "请输入有效的邮箱地址或域名" });
+			continue;
+		}
+		if (target.type === "domain") {
+			ownHosts ??= await ownMailboxHosts(bucket);
+			const error = domainBlockReason(target.value, ownHosts);
+			if (error) {
+				errors.push({ input, error });
+				continue;
+			}
+		}
+		if (!added.some((t) => t.type === target.type && t.value === target.value)) added.push(target);
+	}
+	const entries = await getBlacklist(bucket);
+	if (added.length === 0) return { entries, added, errors };
+	const createdAt = new Date().toISOString();
+	const next: BlacklistEntry[] = [
+		...added.map((target) => ({
+			address: target.value,
+			type: target.type,
+			createdAt,
+			reason: meta.reason,
+			mailboxId: meta.mailboxId,
+		})),
+		...entries.filter((item) => !added.some((target) => sameTarget(item, target))),
+	];
+	await saveBlacklist(bucket, next);
+	await untrustSenders(bucket, added);
+	return { entries: next, added, errors };
+}
+
+/** Block one address or domain; throws with the reason when it can't be blocked. */
 export async function addToBlacklist(
 	bucket: R2Bucket,
 	entry: { address: string; reason?: string; mailboxId?: string },
 ): Promise<BlacklistEntry[]> {
-	const target = parseBlockTarget(entry.address);
-	if (!target) {
-		throw new Error("请输入有效的邮箱地址或域名");
-	}
-	if (target.type === "domain") {
-		const error = await domainBlockError(bucket, target.value);
-		if (error) throw new Error(error);
-	}
+	const { entries, errors } = await addManyToBlacklist(bucket, [entry.address], entry);
+	if (errors.length > 0) throw new Error(errors[0].error);
+	return entries;
+}
+
+/** Remove entries; each key is an address or domain as stored. */
+export async function removeManyFromBlacklist(bucket: R2Bucket, keys: string[]): Promise<BlacklistEntry[]> {
+	const targets = keys.map((key) => parseBlockTarget(key));
+	const raws = keys.map((key) => key.trim().toLowerCase());
 	const entries = await getBlacklist(bucket);
-	const next = entries.filter((item) => !sameTarget(item, target));
-	next.unshift({
-		address: target.value,
-		type: target.type,
-		createdAt: new Date().toISOString(),
-		reason: entry.reason,
-		mailboxId: entry.mailboxId,
-	});
+	const next = entries.filter(
+		(item) => !targets.some((target, i) => (target ? sameTarget(item, target) : item.address === raws[i])),
+	);
 	await saveBlacklist(bucket, next);
-	await untrustSender(bucket, target);
 	return next;
 }
 
 /** Remove one entry; `key` is the address or domain as stored. */
 export async function removeFromBlacklist(bucket: R2Bucket, key: string): Promise<BlacklistEntry[]> {
-	const target = parseBlockTarget(key);
-	const raw = key.trim().toLowerCase();
-	const entries = await getBlacklist(bucket);
-	const next = entries.filter((item) => (target ? !sameTarget(item, target) : item.address !== raw));
-	await saveBlacklist(bucket, next);
-	return next;
+	return removeManyFromBlacklist(bucket, [key]);
 }
 
 /** Remove every entry that blocks `sender`, whether by address or by domain. */
@@ -155,10 +205,13 @@ export async function trustSender(bucket: R2Bucket, sender: string): Promise<voi
 	await bucket.put(TRUSTED_KEY, JSON.stringify({ senders: next }));
 }
 
-async function untrustSender(bucket: R2Bucket, target: BlockTarget): Promise<void> {
+async function untrustSenders(bucket: R2Bucket, targets: BlockTarget[]): Promise<void> {
 	const senders = await getTrustedSenders(bucket);
-	const next = senders.filter((s) =>
-		target.type === "domain" ? !domainMatches(senderDomain(s), target.value) : s !== target.value,
+	const next = senders.filter(
+		(s) =>
+			!targets.some((target) =>
+				target.type === "domain" ? domainMatches(senderDomain(s), target.value) : s === target.value,
+			),
 	);
 	if (next.length !== senders.length) await bucket.put(TRUSTED_KEY, JSON.stringify({ senders: next }));
 }

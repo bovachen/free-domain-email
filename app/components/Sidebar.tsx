@@ -27,20 +27,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router";
 import { Folders, SYSTEM_FOLDER_IDS } from "shared/folders";
-import { parseBlockTarget } from "shared/sender";
 import { useUIStore } from "~/hooks/useUIStore";
 import { useCreateFolder, useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import {
-	useAddKeepEntry,
-	useAddToBlacklist,
 	useAutoDraftSettings,
 	useBlacklist,
 	useBurnSettings,
 	useCreateMailbox,
 	useMailboxes,
-	useRemoveFromBlacklist,
-	useRemoveKeepEntry,
 	useTelegramSettings,
 	useUnifiedFolders,
 	useUpdateAutoDraftSettings,
@@ -179,19 +174,13 @@ export default function Sidebar() {
 	const [chatId, setChatId] = useState("");
 	const [telegramBusy, setTelegramBusy] = useState(false);
 	const [blacklistOpen, setBlacklistOpen] = useState(false);
-	const [blacklistAddress, setBlacklistAddress] = useState("");
 	const [burnOpen, setBurnOpen] = useState(false);
-	const [keepAddress, setKeepAddress] = useState("");
 	const { data: burn } = useBurnSettings();
 	const updateBurn = useUpdateBurnSettings();
-	const addKeepEntry = useAddKeepEntry();
-	const removeKeepEntry = useRemoveKeepEntry();
 	const { data: telegram } = useTelegramSettings();
 	const { data: autoDraft } = useAutoDraftSettings();
 	const updateAutoDraft = useUpdateAutoDraftSettings();
 	const { data: blacklist } = useBlacklist();
-	const addToBlacklist = useAddToBlacklist();
-	const removeFromBlacklist = useRemoveFromBlacklist();
 	const updateTelegram = useUpdateTelegramSettings();
 	const toastManager = useKumoToastManager();
 	const queryClient = useQueryClient();
@@ -290,69 +279,20 @@ export default function Sidebar() {
 		telegram?.enabled && telegram.botTokenConfigured && telegram.chatId,
 	);
 
-	const handleAddBlacklist = async () => {
-		const address = blacklistAddress.trim();
-		if (!address) return;
-		const target = parseBlockTarget(address);
-		try {
-			await addToBlacklist.mutateAsync(address);
-			setBlacklistAddress("");
-			toastManager.add({
-				title: target?.type === "domain" ? `已拉黑整个域名 ${target.value}` : `已拉黑 ${target?.value ?? address}`,
-			});
-		} catch (err) {
-			toastManager.add({
-				title: err instanceof Error ? err.message : "拉黑失败",
-				variant: "error",
-			});
-		}
-	};
-
-	const handleRemoveBlacklist = async (address: string) => {
-		try {
-			await removeFromBlacklist.mutateAsync(address);
-			toastManager.add({ title: `已解除拉黑 ${address}` });
-		} catch (err) {
-			toastManager.add({
-				title: err instanceof Error ? err.message : "解除拉黑失败",
-				variant: "error",
-			});
-		}
-	};
-
 	const saveBurn = (patch: BurnSettingsPatch) =>
 		updateBurn.mutate(patch, {
 			onError: (err) =>
 				toastManager.add({ title: err instanceof Error ? err.message : "保存失败，请重试", variant: "error" }),
 		});
 
-	const handleAddKeep = async () => {
-		const address = keepAddress.trim();
-		if (!address) return;
-		const target = parseBlockTarget(address);
-		try {
-			await addKeepEntry.mutateAsync(address);
-			setKeepAddress("");
-			toastManager.add({
-				title: target?.type === "domain" ? `已永久保留整个域名 ${target.value}` : `已永久保留 ${target?.value ?? address}`,
-			});
-		} catch (err) {
-			toastManager.add({ title: err instanceof Error ? err.message : "保存失败", variant: "error" });
-		}
-	};
-
-	const handleRemoveKeep = async (address: string) => {
-		try {
-			await removeKeepEntry.mutateAsync(address);
-			toastManager.add({ title: `已移出永久保留名单 ${address}` });
-		} catch (err) {
-			toastManager.add({ title: err instanceof Error ? err.message : "移除失败", variant: "error" });
-		}
-	};
-
 	const unifiedUnread = unifiedFolders?.unread ?? {};
 
 	const handleNavClick = () => closeSidebar();
+
+	const openSenderLists = (tab: "block" | "keep") => {
+		navigate(`/mail/senders?tab=${tab}`);
+		closeSidebar();
+	};
 
 	const handleCompose = () => {
 		setComposeMailboxId(mailboxId || mailboxes[0]?.id || null);
@@ -580,7 +520,7 @@ export default function Sidebar() {
 				{burnOpen && (
 					<div className="px-3 pb-2 space-y-2">
 						<p className="text-xs text-kumo-subtle">
-							验证码、群发订阅、系统通知和 noreply 发件人的邮件会自己移到废纸篓：验证码在收到后，其他在读过后。加了星标、移出收件箱、你回复过的会话、给对方写过信的、带附件的、来自你自己域名或下面名单里的发件人都会保留。只对开启后收到的新邮件生效。
+							验证码、群发订阅、系统通知和 noreply 发件人的邮件会自己移到废纸篓：验证码在收到后，其他在读过后。加了星标、移出收件箱、你回复过的会话、给对方写过信的、带附件的、来自你自己域名或永久保留名单里的发件人都会保留。只对开启后收到的新邮件生效。
 						</p>
 						<label className="flex items-center justify-between gap-2 text-sm">
 							<span>启用</span>
@@ -600,59 +540,16 @@ export default function Sidebar() {
 								<DurationInput label="废纸篓里保留" unit="天" value={burn.purgeDays} onCommit={(v) => saveBurn({ purgeDays: v })} />
 							</>
 						)}
-						<p className="text-xs text-kumo-subtle">
-							永久保留名单：这些发件人的邮件从不焚毁。填完整地址只保留该地址，填域名（如 company.com）保留整个域名。
-						</p>
-						<div className="flex gap-1">
-							<input
-								aria-label="要永久保留的地址或域名"
-								placeholder="邮箱地址或域名"
-								value={keepAddress}
-								onChange={(e) => setKeepAddress(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === "Enter") {
-										e.preventDefault();
-										void handleAddKeep();
-									}
-								}}
-								className="min-w-0 flex-1 rounded-md border border-kumo-line bg-kumo-base px-2 py-1.5 text-sm"
-							/>
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={addKeepEntry.isPending || !keepAddress.trim()}
-								onClick={() => void handleAddKeep()}
-							>
-								保留
-							</Button>
-						</div>
-						<div className="max-h-40 overflow-y-auto space-y-1">
-							{(burn?.keep ?? []).length === 0 ? (
-								<p className="text-xs text-kumo-subtle">名单是空的。</p>
-							) : (
-								burn?.keep.map((entry) => (
-									<div
-										key={`${entry.type}:${entry.address}`}
-										className="flex items-center gap-1 rounded-md bg-kumo-tint px-2 py-1"
-									>
-										<span className="min-w-0 flex-1 truncate text-xs text-kumo-default" title={entry.address}>
-											{entry.type === "domain" ? `@${entry.address}` : entry.address}
-										</span>
-										{entry.type === "domain" && (
-											<span className="shrink-0 text-[10px] text-kumo-subtle">整个域名</span>
-										)}
-										<button
-											type="button"
-											className="shrink-0 text-kumo-subtle hover:text-kumo-destructive"
-											aria-label={`移出永久保留名单 ${entry.address}`}
-											onClick={() => void handleRemoveKeep(entry.address)}
-										>
-											<XIcon size={12} />
-										</button>
-									</div>
-								))
-							)}
-						</div>
+						<button
+							type="button"
+							onClick={() => openSenderLists("keep")}
+							className="flex w-full items-center justify-between rounded-md bg-kumo-tint px-2 py-1.5 text-sm text-kumo-default hover:bg-kumo-fill"
+						>
+							<span>永久保留名单</span>
+							<span className="flex items-center gap-1 text-xs text-kumo-subtle">
+								{burn?.keep.length ?? 0} 条 <CaretRightIcon size={12} />
+							</span>
+						</button>
 					</div>
 				)}
 				<button
@@ -773,61 +670,21 @@ export default function Sidebar() {
 				{blacklistOpen && (
 					<div className="px-3 pb-2 space-y-2">
 						<p className="text-xs text-kumo-subtle">
-							拉黑后邮件直接进垃圾邮件，不发 Telegram 通知。填完整地址只拉黑该地址，填域名（如 example.com）拉黑整个域名；gmail.com 等公共邮箱只能拉黑单个地址。
+							拉黑后邮件直接进垃圾邮件，不发 Telegram 通知，可以拉黑单个地址或整个域名。
 						</p>
 						<p className="text-xs text-kumo-subtle">
 							其余新邮件会经过 SPF/DKIM/DMARC 和 AI 检查，疑似钓鱼或垃圾广告自动进垃圾邮件；点「不是垃圾邮件」可放行该发件人。
 						</p>
-						<div className="flex gap-1">
-							<input
-								aria-label="要拉黑的地址或域名"
-								placeholder="邮箱地址或域名"
-								value={blacklistAddress}
-								onChange={(e) => setBlacklistAddress(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === "Enter") {
-										e.preventDefault();
-										void handleAddBlacklist();
-									}
-								}}
-								className="min-w-0 flex-1 rounded-md border border-kumo-line bg-kumo-base px-2 py-1.5 text-sm"
-							/>
-							<Button
-								size="sm"
-								variant="secondary"
-								disabled={addToBlacklist.isPending || !blacklistAddress.trim()}
-								onClick={() => void handleAddBlacklist()}
-							>
-								拉黑
-							</Button>
-						</div>
-						<div className="max-h-40 overflow-y-auto space-y-1">
-							{(blacklist?.entries ?? []).length === 0 ? (
-								<p className="text-xs text-kumo-subtle">暂无已拉黑的发件人。</p>
-							) : (
-								blacklist?.entries.map((entry) => (
-									<div
-										key={`${entry.type ?? "address"}:${entry.address}`}
-										className="flex items-center gap-1 rounded-md bg-kumo-tint px-2 py-1"
-									>
-										<span className="min-w-0 flex-1 truncate text-xs text-kumo-default" title={entry.address}>
-											{entry.type === "domain" ? `@${entry.address}` : entry.address}
-										</span>
-										{entry.type === "domain" && (
-											<span className="shrink-0 text-[10px] text-kumo-subtle">整个域名</span>
-										)}
-										<button
-											type="button"
-											className="shrink-0 text-kumo-subtle hover:text-kumo-destructive"
-											aria-label={`解除拉黑 ${entry.address}`}
-											onClick={() => void handleRemoveBlacklist(entry.address)}
-										>
-											<XIcon size={12} />
-										</button>
-									</div>
-								))
-							)}
-						</div>
+						<button
+							type="button"
+							onClick={() => openSenderLists("block")}
+							className="flex w-full items-center justify-between rounded-md bg-kumo-tint px-2 py-1.5 text-sm text-kumo-default hover:bg-kumo-fill"
+						>
+							<span>管理黑名单</span>
+							<span className="flex items-center gap-1 text-xs text-kumo-subtle">
+								{blacklist?.entries.length ?? 0} 条 <CaretRightIcon size={12} />
+							</span>
+						</button>
 					</div>
 				)}
 				{mailboxId && (

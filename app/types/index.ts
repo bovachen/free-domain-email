@@ -42,6 +42,10 @@ export interface Email {
 	email_references?: string | null;
 	message_id?: string | null;
 	raw_headers?: string | null;
+	/** Burn after reading: "code" and "burn" mail moves itself to the trash (shared/burn.ts). */
+	retention?: "code" | "burn" | "keep" | null;
+	burn_at?: string | null;
+	burned_at?: string | null;
 	attachments?: Attachment[];
 	snippet?: string | null;
 	// Thread aggregate fields (only present in threaded list view)

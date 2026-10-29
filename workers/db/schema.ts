@@ -29,6 +29,14 @@ export const emails = sqliteTable("emails", {
 	thread_id: text("thread_id"),
 	message_id: text("message_id"),
 	raw_headers: text("raw_headers"),
+	/** Burn-after-reading class set on arrival: "code", "burn" or "keep" (see shared/burn.ts). */
+	retention: text("retention"),
+	/** When the email moves itself to the trash; null when nothing is scheduled. */
+	burn_at: text("burn_at"),
+	/** When it was burned; the trash keeps it until purgeDays later. */
+	burned_at: text("burned_at"),
+	/** "chatId:messageId" of its Telegram notification, removed when it burns. */
+	telegram_message: text("telegram_message"),
 });
 
 export const attachments = sqliteTable("attachments", {

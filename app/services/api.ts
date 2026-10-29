@@ -109,6 +109,23 @@ export interface AutoDraftSettings {
 	enabled: boolean;
 }
 
+export interface KeepEntry {
+	/** A sender address, or a domain when `type` is "domain". */
+	address: string;
+	type: "address" | "domain";
+	createdAt: string;
+}
+
+export interface BurnSettings {
+	enabled: boolean;
+	codeMinutes: number;
+	readHours: number;
+	purgeDays: number;
+	keep: KeepEntry[];
+}
+
+export type BurnSettingsPatch = Partial<Pick<BurnSettings, "enabled" | "codeMinutes" | "readHours" | "purgeDays">>;
+
 export interface CloudflareSettings {
 	tokenConfigured: boolean;
 	tokenSource: "env" | "saved" | null;
@@ -158,6 +175,11 @@ const api = {
 	getAutoDraftSettings: () => get<AutoDraftSettings>("/api/v1/settings/auto-draft"),
 	updateAutoDraftSettings: (patch: AutoDraftSettings) =>
 		put<AutoDraftSettings>("/api/v1/settings/auto-draft", patch),
+	getBurnSettings: () => get<BurnSettings>("/api/v1/settings/burn"),
+	updateBurnSettings: (patch: BurnSettingsPatch) => put<BurnSettings>("/api/v1/settings/burn", patch),
+	addKeepEntry: (address: string) => post<BurnSettings>("/api/v1/settings/burn/keep", { address }),
+	removeKeepEntry: (address: string) =>
+		request<BurnSettings>("/api/v1/settings/burn/keep", { method: "DELETE", body: JSON.stringify({ address }) }),
 	getCloudflareSettings: () => get<CloudflareSettings>("/api/v1/settings/cloudflare"),
 	saveCloudflareToken: (apiToken: string) =>
 		put<CloudflareSettings>("/api/v1/settings/cloudflare", { apiToken }),

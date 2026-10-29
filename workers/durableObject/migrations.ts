@@ -168,4 +168,14 @@ export const mailboxMigrations: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_emails_folder_date ON emails(folder_id, date DESC);
         `,
 	},
+	{
+		name: "9_add_burn_after_reading",
+		sql: txn(`
+            ALTER TABLE emails ADD COLUMN retention TEXT;
+            ALTER TABLE emails ADD COLUMN burn_at TEXT;
+            ALTER TABLE emails ADD COLUMN burned_at TEXT;
+            ALTER TABLE emails ADD COLUMN telegram_message TEXT;
+            CREATE INDEX IF NOT EXISTS idx_emails_burn_at ON emails(burn_at);
+        `),
+	},
 ];

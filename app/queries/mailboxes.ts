@@ -3,7 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import api, { type AutoDraftSettings } from "~/services/api";
+import api, { type AutoDraftSettings, type BurnSettings, type BurnSettingsPatch } from "~/services/api";
 import type { BlacklistEntry, Mailbox } from "~/types";
 import { queryKeys } from "./keys";
 
@@ -82,6 +82,45 @@ export function useUpdateAutoDraftSettings() {
 		mutationFn: (patch: AutoDraftSettings) => api.updateAutoDraftSettings(patch),
 		onSuccess: (data) => {
 			qc.setQueryData(queryKeys.autoDraft, data);
+		},
+	});
+}
+
+export function useBurnSettings() {
+	return useQuery<BurnSettings>({
+		queryKey: queryKeys.burn,
+		queryFn: () => api.getBurnSettings(),
+	});
+}
+
+export function useUpdateBurnSettings() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (patch: BurnSettingsPatch) => api.updateBurnSettings(patch),
+		onSuccess: (data) => {
+			qc.setQueryData(queryKeys.burn, data);
+		},
+	});
+}
+
+export function useAddKeepEntry() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (address: string) => api.addKeepEntry(address),
+		onSuccess: (data) => {
+			qc.setQueryData(queryKeys.burn, data);
+			// Matching mail stops burning; the reader's banner reads the email's retention.
+			qc.invalidateQueries({ queryKey: ["emails"] });
+		},
+	});
+}
+
+export function useRemoveKeepEntry() {
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (address: string) => api.removeKeepEntry(address),
+		onSuccess: (data) => {
+			qc.setQueryData(queryKeys.burn, data);
 		},
 	});
 }

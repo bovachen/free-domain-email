@@ -212,6 +212,10 @@ button {
 	color: var(--tg-theme-button-text-color, #ffffff);
 }
 button:disabled { opacity: 0.6; }
+button.secondary { background: var(--tg-theme-secondary-bg-color, #eef2f7); color: var(--tg-theme-link-color, #2481cc); }
+#burn { margin-top: 8px; }
+#burn-text { margin: 0 0 10px; font-size: 14px; }
+.burn-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 #frame { display: block; width: 100%; height: 160px; margin-top: 8px; border: 0; background: #ffffff; }
 #status { padding: 48px 24px; text-align: center; color: var(--tg-theme-hint-color, #8e8e93); }
 #status.error { color: var(--tg-theme-destructive-text-color, #e53935); }
@@ -285,6 +289,49 @@ function pageScript(nonce: string): string {
 		return d.toLocaleString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" });
 	};
 
+	// Burn banner: a star keeps the email; "以后都保留此发件人" adds the sender to the keep list.
+	let burn = null;
+	let starred = false;
+	let keptSender = "";
+	const formatLeft = (iso) => {
+		const minutes = Math.max(1, Math.ceil((Date.parse(iso) - Date.now()) / 60000));
+		if (minutes < 60) return minutes + " 分钟";
+		const hours = Math.floor(minutes / 60);
+		return hours + " 小时" + (minutes % 60 ? " " + (minutes % 60) + " 分钟" : "");
+	};
+	function renderBurn() {
+		const box = $("burn");
+		box.hidden = !burn && !keptSender;
+		if (box.hidden) return;
+		$("burn-actions").hidden = Boolean(keptSender);
+		$("keep-sender").hidden = starred;
+		if (keptSender) {
+			$("burn-text").textContent = "✅ 已把 " + keptSender + " 加入永久保留名单，这封和以后的邮件都不会焚毁。";
+		} else if (starred) {
+			$("burn-text").textContent = "📌 已保留（加了星标），不会焚毁。";
+			$("keep").textContent = "取消保留";
+		} else {
+			const when = burn.at ? "将在 " + formatLeft(burn.at) + "后焚毁" : burn.notice;
+			$("burn-text").textContent = "🔥 " + when + "，之后在废纸篓里保留 " + burn.purgeDays + " 天可恢复。";
+			$("keep").textContent = "📌 保留";
+		}
+	}
+	async function keep(action, sender) {
+		const buttons = [$("keep"), $("keep-sender")];
+		buttons.forEach((b) => { b.disabled = true; });
+		try {
+			const result = await call("/keep", { action });
+			starred = Boolean(result.starred);
+			burn = result.burn;
+			if (action === "sender") keptSender = sender;
+			renderBurn();
+		} catch (e) {
+			alertUser(e.message);
+		} finally {
+			buttons.forEach((b) => { b.disabled = false; });
+		}
+	}
+
 	function renderAttachments(list) {
 		if (!list.length) return;
 		const ul = $("attachment-list");
@@ -333,6 +380,11 @@ function pageScript(nonce: string): string {
 			}
 			$("date").textContent = formatDate(email.date);
 			$("header").hidden = false;
+			burn = email.burn;
+			starred = Boolean(email.starred);
+			$("keep").addEventListener("click", () => keep(starred ? "unstar" : "star"));
+			$("keep-sender").addEventListener("click", () => keep("sender", email.sender));
+			renderBurn();
 			renderAttachments(email.attachments || []);
 			frame.srcdoc = FRAME_HEAD + (email.html || "") + "</body></html>";
 			frame.hidden = false;
@@ -365,6 +417,13 @@ export function renderMiniAppPage(nonce: string): string {
 	<div class="row" id="cc-row" hidden><span class="label">抄送</span><span class="value" id="cc"></span></div>
 	<div class="row"><span class="label">时间</span><span class="value" id="date"></span></div>
 </header>
+<section id="burn" class="card" hidden>
+	<p id="burn-text"></p>
+	<div class="burn-actions" id="burn-actions">
+		<button type="button" id="keep"></button>
+		<button type="button" id="keep-sender" class="secondary">以后都保留此发件人</button>
+	</div>
+</section>
 <section id="attachments" class="card" hidden>
 	<h2>附件</h2>
 	<ul id="attachment-list"></ul>

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
 import { deletesPermanently, Folders } from "shared/folders";
 import { isFreemailDomain, senderDomain } from "shared/sender";
+import BurnBanner from "~/components/email-panel/BurnBanner";
 import EmailPanelDialogs from "~/components/email-panel/EmailPanelDialogs";
 import EmailPanelHeader from "~/components/email-panel/EmailPanelHeader";
 import EmailPanelToolbar from "~/components/email-panel/EmailPanelToolbar";
@@ -273,6 +274,8 @@ export default function EmailPanel({ emailId }: { emailId: string }) {
 				messageCount={allMessages.length}
 				showThreadCount={hasThread}
 			/>
+
+			<BurnBanner email={email} onToggleStar={toggleStar} />
 
 			<div className="flex-1 overflow-y-auto">
 				{hasThread ? (

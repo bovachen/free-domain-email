@@ -14,6 +14,7 @@
 import { Folders } from "../../shared/folders";
 import { isValidEmailAddress, normalizeSenderAddress, parseBlockTarget } from "../../shared/sender";
 import { sendEmail } from "../email-sender";
+import { getBurnSettings } from "./burn-settings";
 import {
 	addToBlacklist,
 	findBlacklistMatch,
@@ -87,17 +88,20 @@ function parseCallback(data: string | undefined): { action: Action; emailId: str
 async function getEmailStatus(env: Env, ref: TelegramMessageRef): Promise<EmailStatus | null> {
 	const stub = env.MAILBOX.get(env.MAILBOX.idFromName(ref.mailboxId));
 	const email = (await stub.getEmail(ref.emailId)) as
-		| { folder_id?: string; read?: boolean; starred?: boolean; sender?: string }
+		| { folder_id?: string; read?: boolean; starred?: boolean; sender?: string; retention?: string | null }
 		| null;
 	if (!email) return null;
 	const sender = email.sender || ref.sender;
 	const blockedBy = sender ? await findBlacklistMatch(env.BUCKET, sender) : null;
+	const folder = email.folder_id || "inbox";
+	const burnable = folder === "inbox" && (email.retention === "code" || email.retention === "burn");
 	return {
-		folder: email.folder_id || "inbox",
+		folder,
 		read: Boolean(email.read),
 		starred: Boolean(email.starred),
 		blocked: Boolean(blockedBy),
 		blockedDomain: blockedBy?.type === "domain" ? blockedBy.address : undefined,
+		burn: burnable && (await getBurnSettings(env.BUCKET)).enabled,
 	};
 }
 

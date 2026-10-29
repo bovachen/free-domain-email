@@ -8,6 +8,7 @@ import {
 	CaretDownIcon,
 	CaretRightIcon,
 	FileIcon,
+	FireIcon,
 	FolderIcon,
 	GearSixIcon,
 	GlobeIcon,
@@ -31,20 +32,24 @@ import { useUIStore } from "~/hooks/useUIStore";
 import { useCreateFolder, useFolders } from "~/queries/folders";
 import { queryKeys } from "~/queries/keys";
 import {
+	useAddKeepEntry,
 	useAddToBlacklist,
 	useAutoDraftSettings,
 	useBlacklist,
+	useBurnSettings,
 	useCreateMailbox,
 	useMailboxes,
 	useRemoveFromBlacklist,
+	useRemoveKeepEntry,
 	useTelegramSettings,
 	useUnifiedFolders,
 	useUpdateAutoDraftSettings,
+	useUpdateBurnSettings,
 	useUpdateTelegramSettings,
 	useUpdateWildcardSettings,
 	useWildcardSettings,
 } from "~/queries/mailboxes";
-import api from "~/services/api";
+import api, { type BurnSettingsPatch } from "~/services/api";
 import DomainsDialog from "./DomainsDialog";
 
 const FOLDER_ICONS: Record<string, React.ReactNode> = {
@@ -64,6 +69,45 @@ const SYSTEM_FOLDER_LINKS = [
 	{ id: Folders.SPAM, label: "垃圾邮件" },
 	{ id: Folders.TRASH, label: "废纸篓" },
 ];
+
+/** A burn duration; saved when the field loses focus, reset if it isn't a positive whole number. */
+function DurationInput({
+	label,
+	unit,
+	value,
+	onCommit,
+}: {
+	label: string;
+	unit: string;
+	value: number;
+	onCommit: (value: number) => void;
+}) {
+	return (
+		<label className="flex items-center justify-between gap-2 text-sm">
+			<span>{label}</span>
+			<span className="flex items-center gap-1">
+				<input
+					key={value}
+					type="number"
+					min={1}
+					step={1}
+					defaultValue={value}
+					onBlur={(e) => {
+						const next = Number(e.target.value);
+						if (!Number.isInteger(next) || next < 1) e.target.value = String(value);
+						else if (next !== value) onCommit(next);
+					}}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") e.currentTarget.blur();
+					}}
+					className="w-16 rounded-md border border-kumo-line bg-kumo-base px-2 py-1 text-right text-sm"
+					aria-label={`${label}（${unit}）`}
+				/>
+				<span className="text-xs text-kumo-subtle">{unit}</span>
+			</span>
+		</label>
+	);
+}
 
 function FolderLink({
 	to,
@@ -136,6 +180,12 @@ export default function Sidebar() {
 	const [telegramBusy, setTelegramBusy] = useState(false);
 	const [blacklistOpen, setBlacklistOpen] = useState(false);
 	const [blacklistAddress, setBlacklistAddress] = useState("");
+	const [burnOpen, setBurnOpen] = useState(false);
+	const [keepAddress, setKeepAddress] = useState("");
+	const { data: burn } = useBurnSettings();
+	const updateBurn = useUpdateBurnSettings();
+	const addKeepEntry = useAddKeepEntry();
+	const removeKeepEntry = useRemoveKeepEntry();
 	const { data: telegram } = useTelegramSettings();
 	const { data: autoDraft } = useAutoDraftSettings();
 	const updateAutoDraft = useUpdateAutoDraftSettings();
@@ -267,6 +317,36 @@ export default function Sidebar() {
 				title: err instanceof Error ? err.message : "解除拉黑失败",
 				variant: "error",
 			});
+		}
+	};
+
+	const saveBurn = (patch: BurnSettingsPatch) =>
+		updateBurn.mutate(patch, {
+			onError: (err) =>
+				toastManager.add({ title: err instanceof Error ? err.message : "保存失败，请重试", variant: "error" }),
+		});
+
+	const handleAddKeep = async () => {
+		const address = keepAddress.trim();
+		if (!address) return;
+		const target = parseBlockTarget(address);
+		try {
+			await addKeepEntry.mutateAsync(address);
+			setKeepAddress("");
+			toastManager.add({
+				title: target?.type === "domain" ? `已永久保留整个域名 ${target.value}` : `已永久保留 ${target?.value ?? address}`,
+			});
+		} catch (err) {
+			toastManager.add({ title: err instanceof Error ? err.message : "保存失败", variant: "error" });
+		}
+	};
+
+	const handleRemoveKeep = async (address: string) => {
+		try {
+			await removeKeepEntry.mutateAsync(address);
+			toastManager.add({ title: `已移出永久保留名单 ${address}` });
+		} catch (err) {
+			toastManager.add({ title: err instanceof Error ? err.message : "移除失败", variant: "error" });
 		}
 	};
 
@@ -485,6 +565,94 @@ export default function Sidebar() {
 								aria-label="所有邮箱启用 AI 自动起草"
 							/>
 						</label>
+					</div>
+				)}
+				<button
+					type="button"
+					onClick={() => setBurnOpen((v) => !v)}
+					className="flex items-center gap-2 w-full px-3 py-2 text-sm text-kumo-strong hover:bg-kumo-tint rounded-md"
+				>
+					<FireIcon size={16} />
+					<span className="flex-1 text-left">阅后即焚</span>
+					{burn?.enabled && <span className="text-xs text-kumo-subtle">已开启</span>}
+					{burnOpen ? <CaretDownIcon size={12} /> : <CaretRightIcon size={12} />}
+				</button>
+				{burnOpen && (
+					<div className="px-3 pb-2 space-y-2">
+						<p className="text-xs text-kumo-subtle">
+							验证码、群发订阅、系统通知和 noreply 发件人的邮件会自己移到废纸篓：验证码在收到后，其他在读过后。加了星标、移出收件箱、你回复过的会话、给对方写过信的、带附件的、来自你自己域名或下面名单里的发件人都会保留。只对开启后收到的新邮件生效。
+						</p>
+						<label className="flex items-center justify-between gap-2 text-sm">
+							<span>启用</span>
+							<input
+								type="checkbox"
+								className="h-4 w-4 accent-kumo-brand"
+								checked={burn?.enabled === true}
+								disabled={!burn || updateBurn.isPending}
+								onChange={(e) => saveBurn({ enabled: e.target.checked })}
+								aria-label="启用阅后即焚"
+							/>
+						</label>
+						{burn && (
+							<>
+								<DurationInput label="验证码收到后焚毁" unit="分钟" value={burn.codeMinutes} onCommit={(v) => saveBurn({ codeMinutes: v })} />
+								<DurationInput label="其他邮件读后焚毁" unit="小时" value={burn.readHours} onCommit={(v) => saveBurn({ readHours: v })} />
+								<DurationInput label="废纸篓里保留" unit="天" value={burn.purgeDays} onCommit={(v) => saveBurn({ purgeDays: v })} />
+							</>
+						)}
+						<p className="text-xs text-kumo-subtle">
+							永久保留名单：这些发件人的邮件从不焚毁。填完整地址只保留该地址，填域名（如 company.com）保留整个域名。
+						</p>
+						<div className="flex gap-1">
+							<input
+								aria-label="要永久保留的地址或域名"
+								placeholder="邮箱地址或域名"
+								value={keepAddress}
+								onChange={(e) => setKeepAddress(e.target.value)}
+								onKeyDown={(e) => {
+									if (e.key === "Enter") {
+										e.preventDefault();
+										void handleAddKeep();
+									}
+								}}
+								className="min-w-0 flex-1 rounded-md border border-kumo-line bg-kumo-base px-2 py-1.5 text-sm"
+							/>
+							<Button
+								size="sm"
+								variant="secondary"
+								disabled={addKeepEntry.isPending || !keepAddress.trim()}
+								onClick={() => void handleAddKeep()}
+							>
+								保留
+							</Button>
+						</div>
+						<div className="max-h-40 overflow-y-auto space-y-1">
+							{(burn?.keep ?? []).length === 0 ? (
+								<p className="text-xs text-kumo-subtle">名单是空的。</p>
+							) : (
+								burn?.keep.map((entry) => (
+									<div
+										key={`${entry.type}:${entry.address}`}
+										className="flex items-center gap-1 rounded-md bg-kumo-tint px-2 py-1"
+									>
+										<span className="min-w-0 flex-1 truncate text-xs text-kumo-default" title={entry.address}>
+											{entry.type === "domain" ? `@${entry.address}` : entry.address}
+										</span>
+										{entry.type === "domain" && (
+											<span className="shrink-0 text-[10px] text-kumo-subtle">整个域名</span>
+										)}
+										<button
+											type="button"
+											className="shrink-0 text-kumo-subtle hover:text-kumo-destructive"
+											aria-label={`移出永久保留名单 ${entry.address}`}
+											onClick={() => void handleRemoveKeep(entry.address)}
+										>
+											<XIcon size={12} />
+										</button>
+									</div>
+								))
+							)}
+						</div>
 					</div>
 				)}
 				<button

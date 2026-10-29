@@ -289,6 +289,8 @@ export interface EmailStatus {
 	blocked: boolean;
 	/** Set when the block covers the sender's whole domain. */
 	blockedDomain?: string;
+	/** Burn after reading applies, so the star button reads "保留" (a star keeps it). */
+	burn?: boolean;
 }
 
 export const NEW_EMAIL_STATUS: EmailStatus = { folder: "inbox", read: false, starred: false, blocked: false };
@@ -334,13 +336,14 @@ export function buildNotificationKeyboard(
 	const id = ref.emailId;
 
 	// Row: read / star toggles.
+	const starLabels = status.burn ? ["📌 已保留 · 取消", "📌 保留（不焚毁）"] : ["★ 取消星标", "☆ 加星标"];
 	rows.push([
 		status.read
 			? { text: "✉️ 标为未读", callback_data: `unread:${id}` }
 			: { text: "✓ 标为已读", callback_data: `read:${id}` },
 		status.starred
-			? { text: "★ 取消星标", callback_data: `unstar:${id}` }
-			: { text: "☆ 加星标", callback_data: `star:${id}` },
+			? { text: starLabels[0], callback_data: `unstar:${id}` }
+			: { text: starLabels[1], callback_data: `star:${id}` },
 	]);
 
 	// Row: folder actions.
@@ -391,10 +394,12 @@ export async function notifyNewEmail(
 		subject: string;
 		body: string;
 		attachmentCount: number;
+		/** Set when the email will burn, e.g. "读后 24 小时焚毁". */
+		burnNotice?: string;
 	},
-): Promise<void> {
+): Promise<string | null> {
 	const settings = await getTelegramSettings(bucket);
-	if (!settings.enabled || !settings.botToken || !settings.chatId) return;
+	if (!settings.enabled || !settings.botToken || !settings.chatId) return null;
 
 	const snippet = previewText(params.body);
 	const code = extractVerificationCode(params.subject, params.body);
@@ -411,6 +416,10 @@ export async function notifyNewEmail(
 	}
 	if (snippet) {
 		lines.push("", escapeHtml(snippet));
+	}
+	if (params.burnNotice) {
+		const keepHint = isTelegramInteractive(settings) ? "，点「📌 保留」可留下" : "，加星标可留下";
+		lines.push("", `<i>🔥 ${escapeHtml(params.burnNotice)}${keepHint}。</i>`);
 	}
 	if (isTelegramInteractive(settings)) {
 		lines.push("", "<i>直接回复这条消息即可发送邮件回复。</i>");
@@ -429,10 +438,40 @@ export async function notifyNewEmail(
 		text: lines.join("\n"),
 		parse_mode: "HTML",
 		disable_web_page_preview: true,
-		reply_markup: buildNotificationKeyboard(settings, ref, NEW_EMAIL_STATUS),
+		reply_markup: buildNotificationKeyboard(settings, ref, { ...NEW_EMAIL_STATUS, burn: Boolean(params.burnNotice) }),
 	})) as { message_id?: number };
 
-	if (sent?.message_id != null) {
-		await bucket.put(messageRefKey(settings.chatId, sent.message_id), JSON.stringify(ref));
+	if (sent?.message_id == null) return null;
+	await bucket.put(messageRefKey(settings.chatId, sent.message_id), JSON.stringify(ref));
+	return `${settings.chatId}:${sent.message_id}`;
+}
+
+/**
+ * Take a burned email's notification ("chatId:messageId") out of the chat.
+ * Telegram lets bots delete messages for 48 hours; an older one gets the
+ * "deleted" keyboard with its undo button instead, as after a tap on 删除.
+ */
+export async function retireNotification(bucket: R2Bucket, settings: TelegramSettings, telegramMessage: string) {
+	if (!settings.botToken) return;
+	const split = telegramMessage.lastIndexOf(":");
+	const chatId = telegramMessage.slice(0, split);
+	const messageId = telegramMessage.slice(split + 1);
+	try {
+		await telegramApi(settings.botToken, "deleteMessage", { chat_id: chatId, message_id: Number(messageId) });
+		await deleteTelegramMessageRef(bucket, chatId, messageId);
+		return;
+	} catch (e) {
+		console.warn("Burn: deleteMessage failed:", (e as Error).message);
+	}
+	const ref = await getTelegramMessageRef(bucket, chatId, messageId);
+	if (!ref) return;
+	try {
+		await telegramApi(settings.botToken, "editMessageReplyMarkup", {
+			chat_id: chatId,
+			message_id: Number(messageId),
+			reply_markup: buildNotificationKeyboard(settings, ref, { folder: "trash", read: true, starred: false, blocked: false }),
+		});
+	} catch (e) {
+		console.warn("Burn: editMessageReplyMarkup failed:", (e as Error).message);
 	}
 }

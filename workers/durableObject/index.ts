@@ -8,7 +8,9 @@ import { eq, and, or, asc, desc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "../db/schema";
 import { Folders } from "../../shared/folders";
-import { normalizeSenderAddress } from "../../shared/sender";
+import { type BlockTarget, normalizeSenderAddress } from "../../shared/sender";
+import { type BurnSettings, getBurnSettings } from "../lib/burn-settings";
+import { getTelegramSettings, retireNotification } from "../lib/telegram";
 import type { Env } from "../types";
 import { applyMigrations, mailboxMigrations } from "./migrations";
 
@@ -88,6 +90,8 @@ interface EmailData {
 	thread_id?: string | null;
 	message_id?: string | null;
 	raw_headers?: string | null;
+	/** Burn-after-reading class of inbound mail (shared/burn.ts). */
+	retention?: string | null;
 }
 
 interface AttachmentData {
@@ -523,6 +527,7 @@ export class MailboxDO extends DurableObject<Env> {
 			.set(data)
 			.where(eq(schema.emails.id, id))
 			.run();
+		await this.syncBurns();
 
 		return this.getEmail(id);
 	}
@@ -532,6 +537,7 @@ export class MailboxDO extends DurableObject<Env> {
 			`UPDATE emails SET read = 1 WHERE thread_id = ? AND read = 0`,
 			threadId,
 		);
+		await this.syncBurns();
 		return { threadId, markedRead: true };
 	}
 
@@ -670,6 +676,7 @@ export class MailboxDO extends DurableObject<Env> {
 			.set({ folder_id: folderId })
 			.where(eq(schema.emails.id, id))
 			.run();
+		await this.syncBurns();
 
 		return true;
 	}
@@ -741,22 +748,29 @@ export class MailboxDO extends DurableObject<Env> {
 				sql.exec(`UPDATE emails SET folder_id = ?1 WHERE id IN (SELECT value FROM json_each(?2))`, target, targetJson);
 				break;
 			}
-			case "delete": {
-				const keys = [
-					...sql.exec(
-						`SELECT id, email_id, filename FROM attachments WHERE email_id IN (SELECT value FROM json_each(?1))`,
-						targetJson,
-					),
-				].map((r) => `attachments/${r.email_id}/${r.id}/${r.filename}`);
-				for (let i = 0; i < keys.length; i += 1000) {
-					await this.env.BUCKET.delete(keys.slice(i, i + 1000));
-				}
-				sql.exec(`DELETE FROM attachments WHERE email_id IN (SELECT value FROM json_each(?1))`, targetJson);
-				sql.exec(`DELETE FROM emails WHERE id IN (SELECT value FROM json_each(?1))`, targetJson);
+			case "delete":
+				await this.deleteEmails(targets);
 				break;
-			}
 		}
+		await this.syncBurns();
 		return targets.length;
+	}
+
+	/** Delete emails for good, with their attachment blobs in R2. */
+	private async deleteEmails(ids: string[]) {
+		const sql = this.ctx.storage.sql;
+		const idsJson = JSON.stringify(ids);
+		const keys = [
+			...sql.exec(
+				`SELECT id, email_id, filename FROM attachments WHERE email_id IN (SELECT value FROM json_each(?1))`,
+				idsJson,
+			),
+		].map((r) => `attachments/${r.email_id}/${r.id}/${r.filename}`);
+		for (let i = 0; i < keys.length; i += 1000) {
+			await this.env.BUCKET.delete(keys.slice(i, i + 1000));
+		}
+		sql.exec(`DELETE FROM attachments WHERE email_id IN (SELECT value FROM json_each(?1))`, idsJson);
+		sql.exec(`DELETE FROM emails WHERE id IN (SELECT value FROM json_each(?1))`, idsJson);
 	}
 
 	/**
@@ -784,6 +798,7 @@ export class MailboxDO extends DurableObject<Env> {
 			normalized,
 		);
 		cursor.toArray();
+		await this.syncBurns();
 		return cursor.rowsWritten ?? 0;
 	}
 
@@ -811,6 +826,7 @@ export class MailboxDO extends DurableObject<Env> {
 			`%@%.${normalized}`,
 		);
 		cursor.toArray();
+		await this.syncBurns();
 		return cursor.rowsWritten ?? 0;
 	}
 
@@ -1046,11 +1062,133 @@ export class MailboxDO extends DurableObject<Env> {
 				thread_id: email.thread_id ?? null,
 				message_id: email.message_id ?? null,
 				raw_headers: email.raw_headers ?? null,
+				retention: email.retention ?? null,
 			})
 			.run();
 
 		if (attachments.length > 0) {
 			this.db.insert(schema.attachments).values(attachments).run();
 		}
+
+		// Replying to a conversation keeps all of it.
+		if (isSent && email.thread_id) {
+			this.ctx.storage.sql.exec(
+				`UPDATE emails SET retention = 'keep', burn_at = NULL
+				 WHERE thread_id = ?1 AND retention IN ('code', 'burn') AND burned_at IS NULL`,
+				email.thread_id,
+			);
+		}
+		await this.syncBurns();
+	}
+
+	// ── Burn after reading ─────────────────────────────────────────
+	// Each email's deadline follows its state (rules in shared/burn.ts);
+	// one alarm fires at the earliest deadline and when burned mail is due
+	// to leave the trash for good.
+
+	/** Bring burn deadlines in line with the emails' current state and re-arm the alarm. */
+	async syncBurns(): Promise<void> {
+		const sql = this.ctx.storage.sql;
+		const involved = sql.exec(
+			`SELECT 1 FROM emails
+			 WHERE retention IN ('code', 'burn') OR burn_at IS NOT NULL OR burned_at IS NOT NULL LIMIT 1`,
+		).toArray();
+		if (involved.length === 0) return;
+		const settings = await getBurnSettings(this.env.BUCKET);
+		const now = Date.now();
+		// Taken back out of the trash after burning: the user wants it after all.
+		sql.exec(`UPDATE emails SET burned_at = NULL, retention = 'keep' WHERE burned_at IS NOT NULL AND folder_id != 'trash'`);
+		// Starred, moved out of the inbox, kept, or a read-burn marked unread again.
+		sql.exec(
+			`UPDATE emails SET burn_at = NULL
+			 WHERE burn_at IS NOT NULL
+			   AND (starred = 1 OR folder_id != 'inbox' OR retention NOT IN ('code', 'burn')
+			     OR (retention = 'burn' AND read = 0))`,
+		);
+		sql.exec(
+			`UPDATE emails SET burn_at = ?1
+			 WHERE burn_at IS NULL AND starred = 0 AND folder_id = 'inbox' AND retention = 'burn' AND read = 1`,
+			new Date(now + settings.readHours * 3_600_000).toISOString(),
+		);
+		sql.exec(
+			`UPDATE emails SET burn_at = ?1
+			 WHERE burn_at IS NULL AND starred = 0 AND folder_id = 'inbox' AND retention = 'code'`,
+			new Date(now + settings.codeMinutes * 60_000).toISOString(),
+		);
+		await this.armBurnAlarm(settings);
+	}
+
+	private async armBurnAlarm(settings: BurnSettings) {
+		// Switched off: whatever alarm is set finds nothing to do; resyncBurns re-arms on switching back on.
+		if (!settings.enabled) return;
+		const sql = this.ctx.storage.sql;
+		const nextBurn = sql.exec<{ at: string | null }>(`SELECT MIN(burn_at) AS at FROM emails`).one().at;
+		const oldestBurned = sql.exec<{ at: string | null }>(
+			`SELECT MIN(burned_at) AS at FROM emails WHERE folder_id = 'trash'`,
+		).one().at;
+		const times = [
+			nextBurn ? Date.parse(nextBurn) : null,
+			oldestBurned ? Date.parse(oldestBurned) + settings.purgeDays * 86_400_000 : null,
+		].filter((t): t is number => t !== null);
+		if (times.length === 0) await this.ctx.storage.deleteAlarm();
+		else await this.ctx.storage.setAlarm(Math.min(...times));
+	}
+
+	/** Burn what is due (to the trash, notification removed) and purge burned mail past its grace period. */
+	async alarm(): Promise<void> {
+		const settings = await getBurnSettings(this.env.BUCKET);
+		if (!settings.enabled) return;
+		const sql = this.ctx.storage.sql;
+		const now = new Date();
+		const due = sql.exec<{ id: string; telegram_message: string | null }>(
+			`SELECT id, telegram_message FROM emails
+			 WHERE burn_at IS NOT NULL AND burn_at <= ?1
+			   AND folder_id = 'inbox' AND starred = 0 AND retention IN ('code', 'burn')`,
+			now.toISOString(),
+		).toArray();
+		if (due.length > 0) {
+			sql.exec(
+				`UPDATE emails SET folder_id = 'trash', burn_at = NULL, burned_at = ?1
+				 WHERE id IN (SELECT value FROM json_each(?2))`,
+				now.toISOString(),
+				JSON.stringify(due.map((row) => row.id)),
+			);
+			const telegram = await getTelegramSettings(this.env.BUCKET);
+			for (const row of due) {
+				if (row.telegram_message) await retireNotification(this.env.BUCKET, telegram, row.telegram_message);
+			}
+		}
+		const expired = sql.exec<{ id: string }>(
+			`SELECT id FROM emails WHERE folder_id = 'trash' AND burned_at IS NOT NULL AND burned_at <= ?1`,
+			new Date(now.getTime() - settings.purgeDays * 86_400_000).toISOString(),
+		).toArray();
+		if (expired.length > 0) await this.deleteEmails(expired.map((row) => row.id));
+		await this.armBurnAlarm(settings);
+	}
+
+	/** The sender or domain joined the keep list: none of their mail here burns any more. */
+	async keepFrom(target: BlockTarget) {
+		const sql = this.ctx.storage.sql;
+		const pending = `retention IN ('code', 'burn') AND burned_at IS NULL`;
+		if (target.type === "domain") {
+			// parseBlockTarget only yields [a-z0-9.-] domains, so no LIKE wildcards.
+			sql.exec(
+				`UPDATE emails SET retention = 'keep', burn_at = NULL
+				 WHERE ${pending} AND (LOWER(sender) LIKE ?1 OR LOWER(sender) LIKE ?2)`,
+				`%@${target.value}`,
+				`%@%.${target.value}`,
+			);
+		} else {
+			sql.exec(
+				`UPDATE emails SET retention = 'keep', burn_at = NULL WHERE ${pending} AND LOWER(sender) = ?1`,
+				target.value,
+			);
+		}
+		await this.syncBurns();
+	}
+
+	/** Remember the email's Telegram notification ("chatId:messageId") so burning can remove it. */
+	async setTelegramMessage(id: string, telegramMessage: string) {
+		this.ctx.storage.sql.exec(`UPDATE emails SET telegram_message = ?1 WHERE id = ?2`, telegramMessage, id);
 	}
 }

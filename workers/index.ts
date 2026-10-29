@@ -35,6 +35,17 @@ import {
 	teardownDomain,
 } from "./lib/domain-setup";
 import { purgeDomainData, purgeMailbox } from "./lib/purge";
+import { burnNotice, classifyRetention, type Retention } from "../shared/burn";
+import {
+	addKeepEntry,
+	type BurnSettings,
+	getBurnSettings,
+	isKeptSender,
+	keepMatchingMail,
+	removeKeepEntry,
+	resyncBurns,
+	updateBurnSettings,
+} from "./lib/burn-settings";
 import {
 	addToBlacklist,
 	findBlacklistMatch,
@@ -48,6 +59,7 @@ import {
 import { checkInboundSpam, extractLinkHosts, SPAM_HEADER } from "./lib/spam-filter";
 import {
 	discoverTelegramChatId,
+	extractVerificationCode,
 	getTelegramSettings,
 	notifyNewEmail,
 	registerTelegramWebhook,
@@ -64,7 +76,7 @@ import { getPollHeartbeat, handleTelegramUpdate, type TelegramUpdate } from "./l
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
-import { parseBlockTarget } from "../shared/sender";
+import { domainMatches, parseBlockTarget, senderDomain } from "../shared/sender";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 
@@ -155,6 +167,48 @@ app.get("/api/v1/settings/auto-draft", async (c) => {
 app.put("/api/v1/settings/auto-draft", async (c) => {
 	const body = (await c.req.json()) as { enabled?: boolean };
 	return c.json(await setAutoDraftSettings(c.env, body));
+});
+
+app.get("/api/v1/settings/burn", async (c) => {
+	return c.json(await getBurnSettings(c.env.BUCKET));
+});
+
+app.put("/api/v1/settings/burn", async (c) => {
+	const body = (await c.req.json()) as Parameters<typeof updateBurnSettings>[1];
+	try {
+		const settings = await updateBurnSettings(c.env.BUCKET, {
+			enabled: body.enabled,
+			codeMinutes: body.codeMinutes,
+			readHours: body.readHours,
+			purgeDays: body.purgeDays,
+		});
+		// Switching on (again) or changing a duration: every mailbox re-arms its alarm.
+		c.executionCtx.waitUntil(
+			resyncBurns(c.env).catch((e) => console.error("Burn resync failed:", (e as Error).message)),
+		);
+		return c.json(settings);
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+app.post("/api/v1/settings/burn/keep", async (c) => {
+	const body = (await c.req.json()) as { address?: string };
+	try {
+		const { settings, target } = await addKeepEntry(c.env.BUCKET, body.address || "");
+		c.executionCtx.waitUntil(
+			keepMatchingMail(c.env, target).catch((e) => console.error("Burn keep failed:", (e as Error).message)),
+		);
+		return c.json(settings);
+	} catch (e) {
+		return c.json({ error: (e as Error).message }, 400);
+	}
+});
+
+app.delete("/api/v1/settings/burn/keep", async (c) => {
+	const body = (await c.req.json()) as { address?: string };
+	if (!body.address) return c.json({ error: "缺少邮箱地址或域名" }, 400);
+	return c.json(await removeKeepEntry(c.env.BUCKET, body.address));
 });
 
 app.get("/api/v1/settings/cloudflare", async (c) => {
@@ -335,7 +389,23 @@ app.get(TELEGRAM_APP_PATH, (c) => {
 	});
 });
 
-type MiniAppRequest = { initData?: string; mailboxId?: string; emailId?: string; attachmentId?: string };
+type MiniAppRequest = {
+	initData?: string;
+	mailboxId?: string;
+	emailId?: string;
+	attachmentId?: string;
+	action?: "star" | "unstar" | "sender";
+};
+
+/** What the Mini App's banner shows about burning; null when the email will not burn. */
+function burnState(
+	email: { folder_id: string; retention: string | null; burn_at: string | null },
+	settings: BurnSettings,
+) {
+	if (!settings.enabled || email.folder_id !== Folders.INBOX) return null;
+	if (email.retention !== "code" && email.retention !== "burn") return null;
+	return { notice: burnNotice(email.retention, settings), at: email.burn_at, purgeDays: settings.purgeDays };
+}
 
 /** The email a Mini App call asks for, or the error response to send instead. */
 async function loadMiniAppEmail(c: AppContext) {
@@ -358,9 +428,9 @@ async function loadMiniAppEmail(c: AppContext) {
 app.post(`${TELEGRAM_APP_PATH}/email`, async (c: AppContext) => {
 	const req = await loadMiniAppEmail(c);
 	if ("error" in req) return req.error;
-	const { stub, email } = req;
-	// Reading the full text in Telegram is reading the email.
-	if (!email.read) await stub.updateEmail(email.id, { read: true });
+	const { stub } = req;
+	// Reading the full text in Telegram is reading the email (and starts a read-burn).
+	const email = req.email.read ? req.email : ((await stub.updateEmail(req.email.id, { read: true })) ?? req.email);
 	const html = await prepareEmailHtml(c.env.BUCKET, email.id, email.body || "", email.attachments);
 	return c.json({
 		subject: email.subject,
@@ -368,11 +438,36 @@ app.post(`${TELEGRAM_APP_PATH}/email`, async (c: AppContext) => {
 		recipient: email.recipient,
 		cc: email.cc,
 		date: email.date,
+		starred: email.starred,
+		burn: burnState(email, await getBurnSettings(c.env.BUCKET)),
 		html,
 		attachments: email.attachments
 			.filter((att) => att.disposition !== "inline")
 			.map(({ id, filename, size }) => ({ id, filename, size })),
 	}, 200, { "Cache-Control": "no-store" });
+});
+
+// The burn banner's buttons: a star keeps this email; "sender" puts its
+// sender on the keep list, which also keeps their mail already scheduled.
+app.post(`${TELEGRAM_APP_PATH}/keep`, async (c: AppContext) => {
+	const req = await loadMiniAppEmail(c);
+	if ("error" in req) return req.error;
+	const { body, stub, email } = req;
+	let updated = email;
+	if (body.action === "sender") {
+		try {
+			const { target } = await addKeepEntry(c.env.BUCKET, email.sender || "");
+			await keepMatchingMail(c.env, target);
+		} catch (e) {
+			return c.json({ error: (e as Error).message }, 400);
+		}
+		updated = (await stub.getEmail(email.id)) ?? email;
+	} else if (body.action === "star" || body.action === "unstar") {
+		updated = (await stub.updateEmail(email.id, { starred: body.action === "star" })) ?? email;
+	} else {
+		return c.json({ error: "无法识别的操作" }, 400);
+	}
+	return c.json({ starred: updated.starred, burn: burnState(updated, await getBurnSettings(c.env.BUCKET)) });
 });
 
 // The Mini App has no download that works on every client, so the bot
@@ -873,6 +968,28 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		? [{ key: SPAM_HEADER, value: spamReason }, ...parsedEmail.headers]
 		: parsedEmail.headers;
 
+	// Burn after reading: inbox mail gets its retention class on arrival
+	// (rules in shared/burn.ts), and only while the feature is switched on.
+	const subject = parsedEmail.subject || "";
+	const plainBody = parsedEmail.text || parsedEmail.html || "";
+	const burnSettings = spamReason ? null : await getBurnSettings(env.BUCKET);
+	let retention: Retention | null = null;
+	if (burnSettings?.enabled) {
+		const fromDomain = senderDomain(senderAddress);
+		const trustedSender =
+			isKeptSender(burnSettings, senderAddress) ||
+			(Boolean(fromDomain) && domains.some((domain) => domainMatches(fromDomain, domain))) ||
+			(senderAddress ? await stub.hasSentTo(senderAddress) : false);
+		retention = classifyRetention({
+			sender: senderAddress,
+			subject,
+			headers: parsedEmail.headers,
+			hasCode: Boolean(extractVerificationCode(subject, plainBody)),
+			hasAttachments: attachmentData.some((att) => att.disposition !== "inline"),
+			trustedSender,
+		});
+	}
+
 	await stub.createEmail(inboundFolder, {
 		id: messageId, subject: parsedEmail.subject || "",
 		sender: senderAddress, recipient: allRecipients.join(", "),
@@ -881,6 +998,7 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		body: parsedEmail.html || parsedEmail.text || "",
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: JSON.stringify(storedHeaders),
+		retention,
 	}, attachmentData);
 
 	if (spamReason) {
@@ -902,10 +1020,14 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		mailboxId,
 		emailId: messageId,
 		sender: parsedEmail.from?.address || "",
-		subject: parsedEmail.subject || "",
-		body: parsedEmail.text || parsedEmail.html || "",
+		subject,
+		body: plainBody,
 		attachmentCount: attachmentData.length,
-	}).catch((e) => console.error("Telegram notify failed:", (e as Error).message)));
+		burnNotice: burnSettings && (retention === "code" || retention === "burn") ? burnNotice(retention, burnSettings) : undefined,
+	})
+		// Burning removes the notification, so the email remembers which one it is.
+		.then((telegramMessage) => (telegramMessage ? stub.setTelegramMessage(messageId, telegramMessage) : undefined))
+		.catch((e) => console.error("Telegram notify failed:", (e as Error).message)));
 }
 
 export { app, receiveEmail };

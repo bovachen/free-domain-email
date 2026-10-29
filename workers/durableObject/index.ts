@@ -12,7 +12,7 @@ import { type BlockTarget, normalizeSenderAddress } from "../../shared/sender";
 import { type BurnSettings, getBurnSettings } from "../lib/burn-settings";
 import { getTelegramSettings, retireNotification } from "../lib/telegram";
 import type { Env } from "../types";
-import { applyMigrations, mailboxMigrations } from "./migrations";
+import { applyMigrations, dropBurnAtIndex, mailboxMigrations } from "./migrations";
 
 /**
  * SQL expression to normalize email subjects by stripping common
@@ -112,6 +112,7 @@ export class MailboxDO extends DurableObject<Env> {
 		super(state, env);
 		this.db = drizzle(this.ctx.storage, { schema });
 		applyMigrations(this.ctx.storage.sql, mailboxMigrations, this.ctx.storage);
+		dropBurnAtIndex(this.ctx.storage.sql);
 	}
 
 	// ── Email CRUD (Drizzle) ───────────────────────────────────────

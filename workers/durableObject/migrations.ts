@@ -169,13 +169,31 @@ export const mailboxMigrations: Migration[] = [
         `,
 	},
 	{
+		// Deployed versions of this migration also created idx_emails_burn_at;
+		// dropBurnAtIndex removes it (see there).
 		name: "9_add_burn_after_reading",
 		sql: txn(`
             ALTER TABLE emails ADD COLUMN retention TEXT;
             ALTER TABLE emails ADD COLUMN burn_at TEXT;
             ALTER TABLE emails ADD COLUMN burned_at TEXT;
             ALTER TABLE emails ADD COLUMN telegram_message TEXT;
-            CREATE INDEX IF NOT EXISTS idx_emails_burn_at ON emails(burn_at);
         `),
 	},
 ];
+
+/**
+ * Migration 9 used to create idx_emails_burn_at. In a production mailbox
+ * every query SQLite planned through that index failed with SQLITE_NOMEM,
+ * while a plain table scan of the same six rows worked; with the threaded
+ * list among those queries, the whole unified inbox came back empty. Nothing
+ * needs the index (a mailbox has few burn deadlines), so it is dropped
+ * wherever it exists. Kept out of the migration runner: a failure here is
+ * logged instead of failing the constructor and the mailbox with it.
+ */
+export function dropBurnAtIndex(sql: SqlStorage): void {
+	try {
+		sql.exec(`DROP INDEX IF EXISTS idx_emails_burn_at`);
+	} catch (e) {
+		console.error("Could not drop idx_emails_burn_at:", (e as Error).message);
+	}
+}

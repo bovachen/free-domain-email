@@ -533,9 +533,14 @@ app.get("/api/v1/unified/folders", async (c) => {
 	await Promise.all(
 		mailboxes.map(async (m) => {
 			const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(m.id));
-			const folders = await stub.getFolders();
-			for (const folder of folders as { id: string; unreadCount: number }[]) {
-				totals[folder.id] = (totals[folder.id] || 0) + (folder.unreadCount || 0);
+			try {
+				const folders = await stub.getFolders();
+				for (const folder of folders as { id: string; unreadCount: number }[]) {
+					totals[folder.id] = (totals[folder.id] || 0) + (folder.unreadCount || 0);
+				}
+			} catch (e) {
+				// One broken mailbox must not take the other mailboxes' counts with it.
+				console.error(`Unified folders: skipping ${m.id}:`, (e as Error).message);
 			}
 		}),
 	);
@@ -552,15 +557,21 @@ app.get("/api/v1/unified/emails", async (c) => {
 	const batches = await Promise.all(
 		mailboxes.map(async (m) => {
 			const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(m.id));
-			const emails = await (stub as any).getThreadedEmails({ folder, page: 1, limit: perBox });
-			const totalCount = await (stub as any).countThreadedEmails(folder);
-			return {
-				totalCount: Number(totalCount) || 0,
-				emails: (Array.isArray(emails) ? emails : []).map((email: Record<string, unknown>): Record<string, unknown> => ({
-					...email,
-					mailbox_id: m.id,
-				})),
-			};
+			try {
+				const emails = await (stub as any).getThreadedEmails({ folder, page: 1, limit: perBox });
+				const totalCount = await (stub as any).countThreadedEmails(folder);
+				return {
+					totalCount: Number(totalCount) || 0,
+					emails: (Array.isArray(emails) ? emails : []).map((email: Record<string, unknown>): Record<string, unknown> => ({
+						...email,
+						mailbox_id: m.id,
+					})),
+				};
+			} catch (e) {
+				// One broken mailbox must not empty the unified list for all the others.
+				console.error(`Unified emails: skipping ${m.id}:`, (e as Error).message);
+				return { totalCount: 0, emails: [] as Record<string, unknown>[] };
+			}
 		}),
 	);
 

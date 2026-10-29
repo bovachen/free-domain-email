@@ -8,6 +8,7 @@ import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
 import { TELEGRAM_WEBHOOK_PATH } from "./lib/telegram";
+import { isTelegramAppPath } from "./lib/telegram-miniapp";
 import { pollTelegramUpdates } from "./lib/telegram-webhook";
 import { EmailMCP } from "./mcp";
 import type { Env } from "./types";
@@ -55,6 +56,12 @@ app.use("*", async (c, next) => {
 	// authenticates with the per-bot secret token instead (see workers/index.ts),
 	// and the Cloudflare Access application must also bypass this path.
 	if (c.req.method === "POST" && c.req.path === TELEGRAM_WEBHOOK_PATH) {
+		return next();
+	}
+	// Neither can Telegram's in-app webview. The Mini App's API checks the
+	// init data Telegram signs with the bot token instead, and its page holds
+	// no mail; the Access application must bypass this path too.
+	if (isTelegramAppPath(c.req.path)) {
 		return next();
 	}
 

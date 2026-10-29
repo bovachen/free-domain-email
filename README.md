@@ -17,6 +17,7 @@
 - **泛域名邮箱（任意前缀）**：发往「任意前缀@你的域名」的邮件都能收到，第一封邮件到达时自动创建对应邮箱，不用提前一个个建。每个域名可以在侧栏的 **通配地址** 中单独开关
 - **Telegram 新邮件通知**：新邮件实时推送到 Telegram，显示收件邮箱、发件人、主题和正文预览
 - **在 Telegram 里直接处理邮件**：通知下方的按钮可以直接标为已读/未读、加星标、标为垃圾邮件、拉黑发件人或拉黑整个域名，这些操作都能撤销；点“删除”会把邮件移到废纸篓，同时清掉这条通知；验证码邮件会把验证码放在通知第一行，并提供一键复制按钮；直接回复通知消息，就会以对应邮箱发出邮件回复。常用操作不用再登录网页后台
+- **在 Telegram 里看完整邮件**：通知上的“📖 查看全文”按钮在 Telegram 内打开完整邮件，HTML 排版、图片和链接都保留，宽版面的营销邮件会自动缩放到手机宽度；附件可以一键发到聊天里预览
 
 <p align="center">
   <img src="docs/telegram-alert.png" width="410" alt="Telegram 验证码邮件通知：第一行加粗显示验证码，下面是收件邮箱、发件人、主题和正文预览；按钮区第一行是红色的复制验证码按钮，之后是打开 Inbox 回复、标为已读、加星标、标为垃圾邮件、删除、拉黑发件人">
@@ -209,6 +210,8 @@ npm run deploy
 
 **可选的即时模式**：点击 **连接 Webhook**，把 `https://<你的收件箱地址>/api/telegram/webhook` 注册到 Telegram，并在 Cloudflare Zero Trust 中为这个路径单独添加一个 Access 应用，策略设为对 *Everyone* **Bypass**。Telegram 的服务器无法登录，所以 Worker 用 Telegram 回传的 secret token（`X-Telegram-Bot-Api-Secret-Token`）验证这个路径。注册 Webhook 后轮询会自动暂停。
 
+**查看全文（Telegram Mini App）**：通知上的“📖 查看全文”按钮会在 Telegram 内打开 `https://<你的收件箱地址>/api/telegram/app`，显示完整的 HTML 邮件、图片和可点击的链接（链接用外部浏览器打开），打开即标为已读。附件旁的“发到聊天”会让机器人把文件发到这个对话。Telegram 内置的浏览器无法通过 Access 登录，所以需要在 Cloudflare Zero Trust 中为 `api/telegram/app` 这个路径（包括它下面的子路径）单独添加一个 Access 应用，策略设为对 *Everyone* **Bypass**。页面本身不含邮件内容，取邮件和发附件的接口都会校验 Telegram 用机器人 Token 签名的启动数据（initData），而且只放行已绑定的那个 Telegram 账号。这个按钮只出现在机器人私聊里、并且收件箱 URL 是 https 地址时，Telegram 不允许在群组里使用这种按钮。
+
 ### 之后添加或移除域名（网页一键配置）
 
 部署完成后再加域名，不用改 `DOMAINS`、也不用重新部署：在侧栏点击 **域名管理**。
@@ -273,6 +276,8 @@ npm run dev
 ## 安全说明
 
 按照设计，任何通过了 Cloudflare Access 策略的用户都能访问本应用中的所有邮箱，包括位于 `/mcp` 的 MCP 服务器：通过 MCP 连接的外部 AI 工具（Claude Code、Cursor 等）只要传入 `mailboxId` 参数，就能操作任意邮箱。应用没有按邮箱划分的权限控制，Cloudflare Access 策略是唯一的信任边界。
+
+例外是两条 Telegram 路径：Webhook（`/api/telegram/webhook`）用注册时生成的 secret token 鉴权，查看全文（`/api/telegram/app`）用 Telegram 以机器人 Token 签名的 initData 鉴权，并且只接受已绑定的 Chat ID。因此机器人 Token 等同于读取全部邮件的凭证，泄露后应立即在 @BotFather 里用 `/revoke` 换新 Token，再到网页里重新保存。
 
 ## 技术栈
 

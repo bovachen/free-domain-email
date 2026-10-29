@@ -3,6 +3,7 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { isFreemailDomain, senderDomain } from "../../shared/sender";
+import { canUseMiniApp, miniAppUrl } from "./telegram-miniapp";
 
 const SETTINGS_KEY = "settings/telegram.json";
 
@@ -168,12 +169,11 @@ export async function setTelegramSettings(
 	return next;
 }
 
+/** Calls a Bot API method; pass FormData for uploads (sendDocument), anything else is sent as JSON. */
 export async function telegramApi(token: string, method: string, body: unknown) {
-	const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(body),
-	});
+	const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, body instanceof FormData
+		? { method: "POST", body }
+		: { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 	const json = (await res.json()) as { ok: boolean; description?: string; result?: unknown };
 	if (!json.ok) {
 		throw new Error(json.description || `Telegram ${method} failed`);
@@ -296,10 +296,11 @@ export const NEW_EMAIL_STATUS: EmailStatus = { folder: "inbox", read: false, sta
 /**
  * Inline keyboard for a new-mail notification, derived from the email's
  * current state so every button is either an action or its undo. Callback
- * buttons round-trip through the webhook/poller; only "open" leaves Telegram.
+ * buttons round-trip through the webhook/poller; "查看全文" opens the Mini
+ * App inside Telegram and only "open" leaves Telegram.
  */
 export function buildNotificationKeyboard(
-	settings: Pick<TelegramSettings, "inboxBaseUrl" | "webhookSecret" | "polling">,
+	settings: Pick<TelegramSettings, "inboxBaseUrl" | "chatId" | "webhookSecret" | "polling">,
 	ref: Pick<TelegramMessageRef, "mailboxId" | "emailId" | "sender" | "code">,
 	status: EmailStatus,
 ) {
@@ -309,13 +310,19 @@ export function buildNotificationKeyboard(
 		url?: string;
 		callback_data?: string;
 		copy_text?: { text: string };
+		web_app?: { url: string };
 		style?: "danger" | "success" | "primary";
 	}[][] = [];
 	if (ref.code) {
 		// "danger" renders red, so the copy button stands out from the rest.
 		rows.push([{ text: `📋 复制验证码 ${ref.code}`, copy_text: { text: ref.code }, style: "danger" }]);
 	}
-	rows.push([{ text: "打开 Inbox 回复", url: openUrl }]);
+	const openRow: (typeof rows)[number] = [];
+	if (canUseMiniApp(settings)) {
+		openRow.push({ text: "📖 查看全文", web_app: { url: miniAppUrl(settings.inboxBaseUrl, ref.mailboxId, ref.emailId) } });
+	}
+	openRow.push({ text: "打开 Inbox 回复", url: openUrl });
+	rows.push(openRow);
 
 	if (!isTelegramInteractive(settings)) {
 		// Neither webhook nor polling: fall back to the browser-based report page.

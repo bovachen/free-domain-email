@@ -53,10 +53,13 @@ import {
 	registerTelegramWebhook,
 	sendTelegramTest,
 	setTelegramSettings,
+	telegramApi,
 	TELEGRAM_WEBHOOK_PATH,
 	toPublicTelegramSettings,
 	unregisterTelegramWebhook,
 } from "./lib/telegram";
+import { TELEGRAM_APP_PATH, verifyInitData } from "./lib/telegram-miniapp";
+import { miniAppCsp, newNonce, prepareEmailHtml, renderMiniAppPage } from "./lib/telegram-miniapp-page";
 import { getPollHeartbeat, handleTelegramUpdate, type TelegramUpdate } from "./lib/telegram-webhook";
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
@@ -314,6 +317,83 @@ app.post(TELEGRAM_WEBHOOK_PATH, async (c) => {
 		return c.text("Bad Request", 400);
 	}
 	await handleTelegramUpdate(c.env, update);
+	return c.json({ ok: true });
+});
+
+// -- Telegram Mini App ----------------------------------------------
+// Opened from a notification's "📖 查看全文" button, outside Cloudflare Access
+// like the webhook (app.ts exempts these paths). The page itself holds no
+// mail; every API call carries the init data Telegram signed with the bot
+// token, and only the user the bot is bound to gets an answer.
+
+app.get(TELEGRAM_APP_PATH, (c) => {
+	const nonce = newNonce();
+	return c.html(renderMiniAppPage(nonce), 200, {
+		"Content-Security-Policy": miniAppCsp(nonce),
+		"Cache-Control": "no-store",
+		"Referrer-Policy": "no-referrer",
+	});
+});
+
+type MiniAppRequest = { initData?: string; mailboxId?: string; emailId?: string; attachmentId?: string };
+
+/** The email a Mini App call asks for, or the error response to send instead. */
+async function loadMiniAppEmail(c: AppContext) {
+	const body = (await c.req.json().catch(() => ({}))) as MiniAppRequest;
+	const settings = await getTelegramSettings(c.env.BUCKET);
+	const userId = settings.enabled ? await verifyInitData(body.initData || "", settings.botToken) : null;
+	if (!userId || userId !== settings.chatId) {
+		return { error: c.json({ error: "Telegram 身份校验失败，请从通知里的「查看全文」按钮重新打开" }, 403) };
+	}
+	const { mailboxId, emailId } = body;
+	if (!mailboxId || !emailId || !(await c.env.BUCKET.head(`mailboxes/${mailboxId}.json`))) {
+		return { error: c.json({ error: "邮箱不存在" }, 404) };
+	}
+	const stub = c.env.MAILBOX.get(c.env.MAILBOX.idFromName(mailboxId));
+	const email = await stub.getEmail(emailId);
+	if (!email) return { error: c.json({ error: "邮件不存在，可能已被删除" }, 404) };
+	return { body, settings, stub, email };
+}
+
+app.post(`${TELEGRAM_APP_PATH}/email`, async (c: AppContext) => {
+	const req = await loadMiniAppEmail(c);
+	if ("error" in req) return req.error;
+	const { stub, email } = req;
+	// Reading the full text in Telegram is reading the email.
+	if (!email.read) await stub.updateEmail(email.id, { read: true });
+	const html = await prepareEmailHtml(c.env.BUCKET, email.id, email.body || "", email.attachments);
+	return c.json({
+		subject: email.subject,
+		sender: email.sender,
+		recipient: email.recipient,
+		cc: email.cc,
+		date: email.date,
+		html,
+		attachments: email.attachments
+			.filter((att) => att.disposition !== "inline")
+			.map(({ id, filename, size }) => ({ id, filename, size })),
+	}, 200, { "Cache-Control": "no-store" });
+});
+
+// The Mini App has no download that works on every client, so the bot
+// uploads the attachment into the chat, where Telegram can preview it.
+app.post(`${TELEGRAM_APP_PATH}/attachment`, async (c: AppContext) => {
+	const req = await loadMiniAppEmail(c);
+	if ("error" in req) return req.error;
+	const { body, settings, email } = req;
+	const attachment = email.attachments.find((att) => att.id === body.attachmentId);
+	if (!attachment) return c.json({ error: "附件不存在" }, 404);
+	const obj = await c.env.BUCKET.get(`attachments/${email.id}/${attachment.id}/${attachment.filename}`);
+	if (!obj) return c.json({ error: "附件文件不存在" }, 404);
+	const form = new FormData();
+	form.set("chat_id", settings.chatId);
+	form.set("document", new File([await obj.arrayBuffer()], attachment.filename, { type: attachment.mimetype }));
+	form.set("caption", `📎 ${(email.subject || "（无主题）").slice(0, 200)}`);
+	try {
+		await telegramApi(settings.botToken, "sendDocument", form);
+	} catch (e) {
+		return c.json({ error: `发送失败：${(e as Error).message}` }, 502);
+	}
 	return c.json({ ok: true });
 });
 

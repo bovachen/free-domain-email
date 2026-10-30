@@ -37,6 +37,7 @@ import {
 	teardownDomain,
 } from "./lib/domain-setup";
 import { purgeDomainData, purgeMailbox } from "./lib/purge";
+import { listedAttachments } from "../shared/attachments";
 import { burnNotice, classifyRetention, type Retention } from "../shared/burn";
 import {
 	addKeepEntries,
@@ -446,7 +447,7 @@ app.post(`${TELEGRAM_APP_PATH}/email`, async (c: AppContext) => {
 	const { stub } = req;
 	// Reading the full text in Telegram is reading the email (and starts a read-burn).
 	const email = req.email.read ? req.email : ((await stub.updateEmail(req.email.id, { read: true })) ?? req.email);
-	const html = await prepareEmailHtml(c.env.BUCKET, email.id, email.body || "", email.attachments);
+	const { html, embedded } = await prepareEmailHtml(c.env.BUCKET, email.id, email.body || "", email.attachments);
 	return c.json({
 		subject: email.subject,
 		sender: email.sender,
@@ -457,7 +458,7 @@ app.post(`${TELEGRAM_APP_PATH}/email`, async (c: AppContext) => {
 		burn: burnState(email, await getBurnSettings(c.env.BUCKET)),
 		html,
 		attachments: email.attachments
-			.filter((att) => att.disposition !== "inline")
+			.filter((att) => !embedded.has(att.id))
 			.map(({ id, filename, size }) => ({ id, filename, size })),
 	}, 200, { "Cache-Control": "no-store" });
 });
@@ -1069,7 +1070,10 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 	// Burn after reading: inbox mail gets its retention class on arrival
 	// (rules in shared/burn.ts), and only while the feature is switched on.
 	const subject = parsedEmail.subject || "";
+	const body = parsedEmail.html || parsedEmail.text || "";
 	const plainBody = parsedEmail.text || parsedEmail.html || "";
+	// The attachments readers list (inline images the body shows are left out).
+	const fileCount = listedAttachments(attachmentData, body).length;
 	const burnSettings = spamReason ? null : await getBurnSettings(env.BUCKET);
 	let retention: Retention | null = null;
 	if (burnSettings?.enabled) {
@@ -1083,7 +1087,7 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 			subject,
 			headers: parsedEmail.headers,
 			hasCode: Boolean(extractVerificationCode(subject, plainBody)),
-			hasAttachments: attachmentData.some((att) => att.disposition !== "inline"),
+			hasAttachments: fileCount > 0,
 			trustedSender,
 		});
 	}
@@ -1093,7 +1097,7 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		sender: senderAddress, recipient: allRecipients.join(", "),
 		cc: ccRecipients.join(", ") || null, bcc: bccRecipients.join(", ") || null,
 		date: new Date().toISOString(), // uses receive time, not the email's Date header
-		body: parsedEmail.html || parsedEmail.text || "",
+		body,
 		in_reply_to: inReplyTo, email_references: emailReferences.length > 0 ? JSON.stringify(emailReferences) : null,
 		thread_id: threadId, message_id: originalMessageId, raw_headers: JSON.stringify(storedHeaders),
 		retention,
@@ -1120,7 +1124,7 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		sender: parsedEmail.from?.address || "",
 		subject,
 		body: plainBody,
-		attachmentCount: attachmentData.length,
+		attachmentCount: fileCount,
 		burnNotice: burnSettings && (retention === "code" || retention === "burn") ? burnNotice(retention, burnSettings) : undefined,
 	})
 		// Burning removes the notification, so the email remembers which one it is.

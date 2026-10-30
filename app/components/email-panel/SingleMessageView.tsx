@@ -53,6 +53,7 @@ export default function SingleMessageView({
 			<EmailAttachmentList
 				mailboxId={mailboxId}
 				emailId={email.id}
+				body={email.body || ""}
 				attachments={email.attachments}
 				onPreviewImage={onPreviewImage}
 				className="px-4 py-3 border-t border-kumo-line shrink-0 md:px-6"

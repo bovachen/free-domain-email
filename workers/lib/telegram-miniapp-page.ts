@@ -24,7 +24,7 @@ interface EmailAttachment {
 	content_id: string | null;
 }
 
-/** Larger inline images are left as broken cid: links rather than bloating the response. */
+/** Larger inline images stay in the attachment list rather than bloating the response. */
 const MAX_INLINE_IMAGE_BYTES = 2 * 1024 * 1024;
 
 const DROPPED_TAGS = ["script", "noscript", "iframe", "frame", "frameset", "object", "embed", "applet", "meta", "base", "link"];
@@ -62,15 +62,17 @@ function toBase64(bytes: Uint8Array): string {
  * The email body as HTML for the Mini App: plain text gets line breaks and
  * links, cid: images become data: URIs (the web reader loads them from an
  * attachment URL behind Access, which the Mini App cannot reach), and
- * active content is stripped.
+ * active content is stripped. `embedded` holds the IDs of the attachments
+ * the body now shows; everything else belongs in the attachment list.
  */
 export async function prepareEmailHtml(
 	bucket: R2Bucket,
 	emailId: string,
 	body: string,
 	attachments: EmailAttachment[],
-): Promise<string> {
+): Promise<{ html: string; embedded: Set<string> }> {
 	let html = plainTextToHtml(body);
+	const embedded = new Set<string>();
 	for (const att of attachments) {
 		const cid = att.content_id?.replace(/^<|>$/g, "");
 		if (!cid || !att.mimetype.startsWith("image/")) continue;
@@ -79,8 +81,9 @@ export async function prepareEmailHtml(
 		if (!obj || obj.size > MAX_INLINE_IMAGE_BYTES) continue;
 		const dataUri = `data:${att.mimetype};base64,${toBase64(new Uint8Array(await obj.arrayBuffer()))}`;
 		html = html.replace(new RegExp(`cid:${cid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "gi"), dataUri);
+		embedded.add(att.id);
 	}
-	return sanitizeEmailHtml(html);
+	return { html: await sanitizeEmailHtml(html), embedded };
 }
 
 export function newNonce(): string {

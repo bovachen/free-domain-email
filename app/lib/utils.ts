@@ -186,10 +186,6 @@ export function rewriteInlineImages(
 	return result;
 }
 
-export function getNonInlineAttachments(attachments?: Attachment[]): Attachment[] {
-	return attachments?.filter((attachment) => attachment.disposition !== "inline") ?? [];
-}
-
 export function getAttachmentUrl(
 	mailboxId: string,
 	emailId: string,

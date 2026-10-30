@@ -3,12 +3,15 @@
 //     https://opensource.org/licenses/Apache-2.0
 
 import { PaperclipIcon, FileIcon, ImageIcon } from "@phosphor-icons/react";
-import { formatBytes, getAttachmentUrl, getNonInlineAttachments } from "~/lib/utils";
+import { listedAttachments } from "shared/attachments";
+import { formatBytes, getAttachmentUrl } from "~/lib/utils";
 import type { Attachment } from "~/types";
 
 interface EmailAttachmentListProps {
 	mailboxId?: string;
 	emailId: string;
+	/** The email body; inline images it shows are left out of the list. */
+	body: string;
 	attachments?: Attachment[];
 	onPreviewImage?: (url: string, filename: string) => void;
 	className?: string;
@@ -18,6 +21,7 @@ interface EmailAttachmentListProps {
 export default function EmailAttachmentList({
 	mailboxId,
 	emailId,
+	body,
 	attachments,
 	onPreviewImage,
 	className,
@@ -25,7 +29,7 @@ export default function EmailAttachmentList({
 }: EmailAttachmentListProps) {
 	if (!mailboxId) return null;
 
-	const files = getNonInlineAttachments(attachments);
+	const files = listedAttachments(attachments, body);
 	if (files.length === 0) return null;
 
 	return (

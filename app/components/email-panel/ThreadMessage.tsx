@@ -210,6 +210,7 @@ export default function ThreadMessage({
 				<EmailAttachmentList
 					mailboxId={mailboxId}
 					emailId={email.id}
+					body={email.body || ""}
 					attachments={email.attachments}
 					onPreviewImage={onPreviewImage}
 					className="mt-3 md:ml-[42px]"

@@ -520,7 +520,7 @@ export default function Sidebar() {
 				{burnOpen && (
 					<div className="px-3 pb-2 space-y-2">
 						<p className="text-xs text-kumo-subtle">
-							验证码、群发订阅、系统通知和 noreply 发件人的邮件会自己移到废纸篓：验证码在收到后，其他在读过后。加了星标、移出收件箱、你回复过的会话、给对方写过信的、带附件的、来自你自己域名或永久保留名单里的发件人都会保留。只对开启后收到的新邮件生效。
+							收件箱里的所有邮件收到后都会自己移到废纸篓，读没读都一样，包括你自己域名发来的；验证码走得更早。加了星标（Telegram 上的「📌 保留」）、你回复过的会话、移出收件箱的，以及永久保留名单里的发件人会保留。只对开启后收到的新邮件生效。
 						</p>
 						<label className="flex items-center justify-between gap-2 text-sm">
 							<span>启用</span>
@@ -536,7 +536,7 @@ export default function Sidebar() {
 						{burn && (
 							<>
 								<DurationInput label="验证码收到后焚毁" unit="分钟" value={burn.codeMinutes} onCommit={(v) => saveBurn({ codeMinutes: v })} />
-								<DurationInput label="其他邮件读后焚毁" unit="小时" value={burn.readHours} onCommit={(v) => saveBurn({ readHours: v })} />
+								<DurationInput label="邮件收到后焚毁" unit="小时" value={burn.burnHours} onCommit={(v) => saveBurn({ burnHours: v })} />
 								<DurationInput label="废纸篓里保留" unit="天" value={burn.purgeDays} onCommit={(v) => saveBurn({ purgeDays: v })} />
 							</>
 						)}

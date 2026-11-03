@@ -11,6 +11,7 @@
  * chat ID. Anything else is acknowledged and ignored.
  */
 
+import { isBurnable } from "../../shared/burn";
 import { Folders } from "../../shared/folders";
 import { isValidEmailAddress, normalizeSenderAddress, parseBlockTarget } from "../../shared/sender";
 import { sendEmail } from "../email-sender";
@@ -95,7 +96,7 @@ async function getEmailStatus(env: Env, ref: TelegramMessageRef): Promise<EmailS
 	const sender = email.sender || ref.sender;
 	const blockedBy = sender ? await findBlacklistMatch(env.BUCKET, sender) : null;
 	const folder = email.folder_id || "inbox";
-	const burnable = folder === "inbox" && (email.retention === "code" || email.retention === "burn");
+	const burnable = folder === "inbox" && isBurnable(email.retention);
 	return {
 		folder,
 		read: Boolean(email.read),

@@ -4,7 +4,7 @@
 
 import { Button, useKumoToastManager } from "@cloudflare/kumo";
 import { Folders } from "shared/folders";
-import { burnNotice, formatTimeLeft } from "shared/burn";
+import { burnNotice, formatTimeLeft, isBurnable } from "shared/burn";
 import { useAddKeepEntries, useBurnSettings } from "~/queries/mailboxes";
 import type { Email } from "~/types";
 
@@ -23,7 +23,7 @@ export default function BurnBanner({ email, onToggleStar }: BurnBannerProps) {
 	const toastManager = useKumoToastManager();
 
 	if (!settings?.enabled || email.folder_id !== Folders.INBOX) return null;
-	if (email.retention !== "code" && email.retention !== "burn") return null;
+	if (!isBurnable(email.retention)) return null;
 
 	let text: string;
 	if (email.starred) {

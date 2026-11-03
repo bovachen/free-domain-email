@@ -1249,17 +1249,16 @@ export class MailboxDO extends DurableObject<Env> {
 		const now = Date.now();
 		// Taken back out of the trash after burning: the user wants it after all.
 		sql.exec(`UPDATE emails SET burned_at = NULL, retention = 'keep' WHERE burned_at IS NOT NULL AND folder_id != 'trash'`);
-		// Starred, moved out of the inbox, kept, or a read-burn marked unread again.
+		// Starred, moved out of the inbox, or kept.
 		sql.exec(
 			`UPDATE emails SET burn_at = NULL
 			 WHERE burn_at IS NOT NULL
-			   AND (starred = 1 OR folder_id != 'inbox' OR retention NOT IN ('code', 'burn')
-			     OR (retention = 'burn' AND read = 0))`,
+			   AND (starred = 1 OR folder_id != 'inbox' OR retention NOT IN ('code', 'burn'))`,
 		);
 		sql.exec(
 			`UPDATE emails SET burn_at = ?1
-			 WHERE burn_at IS NULL AND starred = 0 AND folder_id = 'inbox' AND retention = 'burn' AND read = 1`,
-			new Date(now + settings.readHours * 3_600_000).toISOString(),
+			 WHERE burn_at IS NULL AND starred = 0 AND folder_id = 'inbox' AND retention = 'burn'`,
+			new Date(now + settings.burnHours * 3_600_000).toISOString(),
 		);
 		sql.exec(
 			`UPDATE emails SET burn_at = ?1

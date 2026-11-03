@@ -127,12 +127,12 @@ export interface ListInputError {
 export interface BurnSettings {
 	enabled: boolean;
 	codeMinutes: number;
-	readHours: number;
+	burnHours: number;
 	purgeDays: number;
 	keep: KeepEntry[];
 }
 
-export type BurnSettingsPatch = Partial<Pick<BurnSettings, "enabled" | "codeMinutes" | "readHours" | "purgeDays">>;
+export type BurnSettingsPatch = Partial<Pick<BurnSettings, "enabled" | "codeMinutes" | "burnHours" | "purgeDays">>;
 
 export interface CloudflareSettings {
 	tokenConfigured: boolean;

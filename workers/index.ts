@@ -38,7 +38,7 @@ import {
 } from "./lib/domain-setup";
 import { purgeDomainData, purgeMailbox } from "./lib/purge";
 import { listedAttachments } from "../shared/attachments";
-import { burnNotice, classifyRetention, type Retention } from "../shared/burn";
+import { burnNotice, classifyRetention, isBurnable, type Retention } from "../shared/burn";
 import {
 	addKeepEntries,
 	addKeepEntry,
@@ -80,7 +80,6 @@ import { getPollHeartbeat, handleTelegramUpdate, type TelegramUpdate } from "./l
 import { SendEmailRequestSchema } from "./lib/schemas";
 import { handleReplyEmail, handleForwardEmail } from "./routes/reply-forward";
 import { Folders } from "../shared/folders";
-import { domainMatches, senderDomain } from "../shared/sender";
 import type { Env } from "./types";
 import { requireMailbox, type MailboxContext } from "./lib/mailbox";
 import type { MailboxBackup } from "./durableObject";
@@ -184,7 +183,7 @@ app.put("/api/v1/settings/burn", async (c) => {
 		const settings = await updateBurnSettings(c.env.BUCKET, {
 			enabled: body.enabled,
 			codeMinutes: body.codeMinutes,
-			readHours: body.readHours,
+			burnHours: body.burnHours,
 			purgeDays: body.purgeDays,
 		});
 		// Switching on (again) or changing a duration: every mailbox re-arms its alarm.
@@ -419,7 +418,7 @@ function burnState(
 	settings: BurnSettings,
 ) {
 	if (!settings.enabled || email.folder_id !== Folders.INBOX) return null;
-	if (email.retention !== "code" && email.retention !== "burn") return null;
+	if (!isBurnable(email.retention)) return null;
 	return { notice: burnNotice(email.retention, settings), at: email.burn_at, purgeDays: settings.purgeDays };
 }
 
@@ -1077,18 +1076,12 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 	const burnSettings = spamReason ? null : await getBurnSettings(env.BUCKET);
 	let retention: Retention | null = null;
 	if (burnSettings?.enabled) {
-		const fromDomain = senderDomain(senderAddress);
-		const trustedSender =
-			isKeptSender(burnSettings, senderAddress) ||
-			(Boolean(fromDomain) && domains.some((domain) => domainMatches(fromDomain, domain))) ||
-			(senderAddress ? await stub.hasSentTo(senderAddress) : false);
 		retention = classifyRetention({
 			sender: senderAddress,
 			subject,
 			headers: parsedEmail.headers,
 			hasCode: Boolean(extractVerificationCode(subject, plainBody)),
-			hasAttachments: fileCount > 0,
-			trustedSender,
+			keptSender: isKeptSender(burnSettings, senderAddress),
 		});
 	}
 
@@ -1125,7 +1118,7 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		subject,
 		body: plainBody,
 		attachmentCount: fileCount,
-		burnNotice: burnSettings && (retention === "code" || retention === "burn") ? burnNotice(retention, burnSettings) : undefined,
+		burnNotice: burnSettings && isBurnable(retention) ? burnNotice(retention, burnSettings) : undefined,
 	})
 		// Burning removes the notification, so the email remembers which one it is.
 		.then((telegramMessage) => (telegramMessage ? stub.setTelegramMessage(messageId, telegramMessage) : undefined))

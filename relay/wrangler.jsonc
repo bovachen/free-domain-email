@@ -1,0 +1,19 @@
+// Relay Worker for a domain hosted in another Cloudflare account.
+// Deploy it to THAT account, not the inbox's:
+//   CLOUDFLARE_ACCOUNT_ID=<the other account's id> npx wrangler deploy --config relay/wrangler.jsonc
+//   CLOUDFLARE_ACCOUNT_ID=<the other account's id> npx wrangler secret put RELAY_SECRET --config relay/wrangler.jsonc
+{
+	"$schema": "../node_modules/wrangler/config-schema.json",
+	"name": "inbox-relay",
+	"main": "./src/index.js",
+	"compatibility_date": "2025-11-28",
+	// Nothing calls it over HTTP: Email Routing invokes the email handler.
+	"workers_dev": false,
+	"observability": {
+		"enabled": true
+	},
+	"vars": {
+		// The inbox's address, without a path.
+		"INBOX_URL": "https://inbox.example.com"
+	}
+}

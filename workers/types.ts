@@ -7,6 +7,17 @@ export interface Env extends Cloudflare.Env {
 	TEAM_DOMAIN: string;
 	/** Optional: send outbound mail through Resend instead of the `send_email` binding. */
 	RESEND_API_KEY?: string;
+	/**
+	 * Optional: comma-separated sender domains that go through Resend. When
+	 * set, every other domain keeps using the `send_email` binding; when unset,
+	 * `RESEND_API_KEY` sends everything through Resend.
+	 */
+	RESEND_DOMAINS?: string;
+	/**
+	 * Optional: shared secret for POST /api/relay/inbound, where a relay Worker
+	 * in another Cloudflare account delivers mail for a domain hosted there.
+	 */
+	RELAY_SECRET?: string;
 	/** Optional: Cloudflare API token for "添加域名"; wins over a token saved in the web UI. */
 	CLOUDFLARE_API_TOKEN?: string;
 	/** Optional: catch-all target when no existing domain already routes to this Worker. */

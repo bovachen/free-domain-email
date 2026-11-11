@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { jwtVerify, createRemoteJWKSet } from "jose";
 import { createRequestHandler } from "react-router";
 import { app as apiApp, receiveEmail } from "./index";
+import { RELAY_INBOUND_PATH } from "./lib/relay";
 import { TELEGRAM_WEBHOOK_PATH } from "./lib/telegram";
 import { isTelegramAppPath } from "./lib/telegram-miniapp";
 import { pollTelegramUpdates } from "./lib/telegram-webhook";
@@ -62,6 +63,12 @@ app.use("*", async (c, next) => {
 	// init data Telegram signs with the bot token instead, and its page holds
 	// no mail; the Access application must bypass this path too.
 	if (isTelegramAppPath(c.req.path)) {
+		return next();
+	}
+	// Nor can a relay Worker in another Cloudflare account. The route checks
+	// the shared RELAY_SECRET instead (see workers/lib/relay.ts); the Access
+	// application must bypass this path as well.
+	if (c.req.method === "POST" && c.req.path === RELAY_INBOUND_PATH) {
 		return next();
 	}
 

@@ -5,8 +5,9 @@
 /**
  * Outbound email delivery.
  *
- * Sends through Resend when the `RESEND_API_KEY` secret is set, otherwise
- * through the Cloudflare Email Service `send_email` binding (`env.EMAIL.send()`).
+ * Sends through Resend when the `RESEND_API_KEY` secret is set (for every
+ * sender domain, or only those listed in `RESEND_DOMAINS`), otherwise through
+ * the Cloudflare Email Service `send_email` binding (`env.EMAIL.send()`).
  *
  * See: https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
  *      https://resend.com/docs/api-reference/emails/send-email
@@ -87,19 +88,44 @@ async function sendWithResend(
 }
 
 /**
- * Send an email through Resend (when `RESEND_API_KEY` is set) or the
- * Cloudflare Email Service binding.
+ * Whether mail from this sender goes through Resend. Without `RESEND_API_KEY`
+ * nothing does. With it, everything does unless `RESEND_DOMAINS` narrows
+ * Resend to the listed sender domains — e.g. a domain hosted in another
+ * Cloudflare account, which the Email Service binding here cannot send for.
+ */
+export function usesResend(
+	env: Pick<Env, "RESEND_API_KEY" | "RESEND_DOMAINS">,
+	from: SendEmailParams["from"],
+): boolean {
+	if (!env.RESEND_API_KEY) return false;
+	const listed = (env.RESEND_DOMAINS || "")
+		.split(",")
+		.map((d) => d.trim().toLowerCase().replace(/^@/, ""))
+		.filter(Boolean);
+	if (listed.length === 0) return true;
+	const address = typeof from === "string" ? from : from.email;
+	// Accepts a bare address or `"Name" <address>`.
+	const bare = /<([^<>]+)>\s*$/.exec(address)?.[1] ?? address;
+	const domain = bare.slice(bare.lastIndexOf("@") + 1).trim().toLowerCase();
+	return listed.includes(domain);
+}
+
+/**
+ * Send an email through Resend or the Cloudflare Email Service binding,
+ * as decided by {@link usesResend}.
  *
- * @param env      - Worker env; uses `RESEND_API_KEY` if present, else the `EMAIL` binding
+ * @param env      - Worker env; `RESEND_API_KEY` / `RESEND_DOMAINS` pick the channel, else the `EMAIL` binding
  * @param params   - Email parameters (to, from, subject, body, etc.)
  * @returns The send result with messageId
  * @throws On validation or delivery errors
  */
 export async function sendEmail(
-	env: Pick<Env, "EMAIL" | "RESEND_API_KEY">,
+	env: Pick<Env, "EMAIL" | "RESEND_API_KEY" | "RESEND_DOMAINS">,
 	params: SendEmailParams,
 ): Promise<{ messageId: string }> {
-	if (env.RESEND_API_KEY) return sendWithResend(env.RESEND_API_KEY, params);
+	if (env.RESEND_API_KEY && usesResend(env, params.from)) {
+		return sendWithResend(env.RESEND_API_KEY, params);
+	}
 
 	const message: Record<string, unknown> = {
 		to: params.to,

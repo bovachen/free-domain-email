@@ -37,6 +37,7 @@ import {
 	teardownDomain,
 } from "./lib/domain-setup";
 import { purgeDomainData, purgeMailbox } from "./lib/purge";
+import { RELAY_ENVELOPE_TO_HEADER, RELAY_INBOUND_PATH, relayAuthorized } from "./lib/relay";
 import { listedAttachments } from "../shared/attachments";
 import { burnNotice, classifyRetention, isBurnable, type Retention } from "../shared/burn";
 import {
@@ -226,15 +227,24 @@ app.delete("/api/v1/settings/burn/keep", async (c) => {
 	return c.json(await removeKeepEntries(c.env.BUCKET, keys));
 });
 
+/**
+ * The domain dialog offers to register / remove a domain in Resend only when
+ * Resend carries every domain. With RESEND_DOMAINS set, Resend is limited to
+ * hand-picked domains and a newly added one sends through Email Service.
+ */
+function resendForAllDomains(env: Env): boolean {
+	return Boolean(env.RESEND_API_KEY) && !(env.RESEND_DOMAINS || "").trim();
+}
+
 app.get("/api/v1/settings/cloudflare", async (c) => {
-	return c.json({ ...(await getCloudflareSettings(c.env)), resendConfigured: Boolean(c.env.RESEND_API_KEY) });
+	return c.json({ ...(await getCloudflareSettings(c.env)), resendConfigured: resendForAllDomains(c.env) });
 });
 
 app.put("/api/v1/settings/cloudflare", async (c) => {
 	const body = (await c.req.json()) as { apiToken?: string };
 	try {
 		const saved = await saveCloudflareToken(c.env, body.apiToken || "");
-		return c.json({ ...saved, resendConfigured: Boolean(c.env.RESEND_API_KEY) });
+		return c.json({ ...saved, resendConfigured: resendForAllDomains(c.env) });
 	} catch (e) {
 		return c.json({ error: (e as Error).message }, 400);
 	}
@@ -1124,5 +1134,33 @@ async function receiveEmail(event: { to?: string; raw: ReadableStream; rawSize: 
 		.then((telegramMessage) => (telegramMessage ? stub.setTelegramMessage(messageId, telegramMessage) : undefined))
 		.catch((e) => console.error("Telegram notify failed:", (e as Error).message)));
 }
+
+// A relay Worker in another Cloudflare account delivers mail here for a
+// domain whose Email Routing cannot reach this Worker directly. No Access
+// session: authenticated by the shared RELAY_SECRET (app.ts exempts the path).
+// The body is the raw MIME message; a non-2xx answer makes the relay fail
+// the delivery so Email Routing retries or bounces it.
+app.post(RELAY_INBOUND_PATH, async (c) => {
+	if (!relayAuthorized(c.env.RELAY_SECRET, c.req.header("authorization"))) {
+		return c.text("Forbidden", 403);
+	}
+	const declared = Number(c.req.header("content-length"));
+	if (Number.isFinite(declared) && declared > MAX_EMAIL_SIZE) return c.text("Payload Too Large", 413);
+	const raw = await c.req.arrayBuffer();
+	if (raw.byteLength === 0) return c.text("Bad Request", 400);
+	if (raw.byteLength > MAX_EMAIL_SIZE) return c.text("Payload Too Large", 413);
+	const to = c.req.header(RELAY_ENVELOPE_TO_HEADER)?.trim() || undefined;
+	try {
+		await receiveEmail(
+			{ to, raw: new Response(raw).body as ReadableStream, rawSize: raw.byteLength },
+			c.env,
+			c.executionCtx as ExecutionContext,
+		);
+	} catch (e) {
+		console.error("Failed to process relayed email:", (e as Error).message, (e as Error).stack);
+		return c.text("Failed to process email", 500);
+	}
+	return c.json({ ok: true });
+});
 
 export { app, receiveEmail };

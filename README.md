@@ -182,7 +182,7 @@ npm run deploy
    或者在控制台：Worker → **Settings → Variables and Secrets** → 添加，类型选 **Secret**，名称填 `RESEND_API_KEY`。
 7. 在网页里写一封邮件发给你的其他邮箱，确认能收到。
 
-配置了 `RESEND_API_KEY` 之后，所有发信（网页写信、回复、转发、AI 助手、Telegram 里回复）都会走 Resend；删除这个密钥就会切回 Cloudflare Email Service。每个要发信的域名都要在 Resend 里验证，从没验证的域名发信会报错。
+配置了 `RESEND_API_KEY` 之后，所有发信（网页写信、回复、转发、AI 助手、Telegram 里回复）都会走 Resend；删除这个密钥就会切回 Cloudflare Email Service。只想让部分域名走 Resend 的话，用变量 `RESEND_DOMAINS` 列出它们，见[跨账号中继](#接入另一个-cloudflare-账号下的域名跨账号中继)。每个要发信的域名都要在 Resend 里验证，从没验证的域名发信会报错。
 
 #### 方式 B：Cloudflare Email Service
 
@@ -254,6 +254,45 @@ npm run deploy
 
 Token 保存在你自己的 R2 存储桶里；也可以改用 Worker 密钥 `CLOUDFLARE_API_TOKEN`，设置后优先使用密钥。如果没有任何已有域名能读出 Worker 名，会使用变量 `WORKER_NAME`，默认 `free-domain-email`。
 
+### 接入另一个 Cloudflare 账号下的域名（跨账号中继）
+
+Email Routing 只能把邮件交给**同一个账号**下的 Worker，所以放在别的 Cloudflare 账号里的域名不能直接用上面的「域名管理」添加。不想迁移域名的话，可以在那个账号里放一个很小的中继 Worker（[relay/](relay/)，免费计划即可），它收到邮件后通过 HTTPS 转交给收件箱。下面把收件箱所在的账号叫「主账号」，域名所在的账号叫「另一个账号」。
+
+**主账号（收件箱）**
+
+1. 生成一个随机密钥并保存为 Worker 密钥 `RELAY_SECRET`：
+   ```bash
+   openssl rand -hex 32
+   npx wrangler secret put RELAY_SECRET --config wrangler.local.jsonc
+   ```
+   没有设置 `RELAY_SECRET` 时，接收入口对所有请求返回 403。
+2. 在 Cloudflare Zero Trust 中为路径 `/api/relay/inbound` 单独添加一个 Access 应用，策略设为对 *Everyone* **Bypass**（做法和 Telegram Webhook 一样）。中继 Worker 无法登录，这个路径改用 `RELAY_SECRET` 鉴权。
+3. 把域名加进 `DOMAINS` 变量并重新部署。「域名管理」只能列出主账号里的域名，所以这类域名要写在 `DOMAINS` 里。
+
+**另一个账号（域名所在）**
+
+1. 把 [relay/wrangler.jsonc](relay/wrangler.jsonc) 里的 `INBOX_URL` 改成收件箱地址（例如 `https://inbox.example.com`），然后部署到**另一个账号**并设置同一个密钥：
+   ```bash
+   CLOUDFLARE_ACCOUNT_ID=<另一个账号的 ID> npx wrangler deploy --config relay/wrangler.jsonc
+   CLOUDFLARE_ACCOUNT_ID=<另一个账号的 ID> npx wrangler secret put RELAY_SECRET --config relay/wrangler.jsonc
+   ```
+   也可以不用命令行：在控制台新建一个 Worker，把 [relay/src/index.js](relay/src/index.js) 的内容粘贴进去，再在 **Settings → Variables and Secrets** 里添加变量 `INBOX_URL` 和密钥 `RELAY_SECRET`。
+2. 为域名开启 Email Routing（同第 1 步），在 **Routing rules** 里把 **Catch-all address** 的操作设为 **Send to a Worker**，目标选 `inbox-relay`。
+3. 从别的邮箱给「任意前缀@这个域名」发一封信，确认收件箱里能收到。收不到时在另一个账号查看 `inbox-relay` 的日志：`403` 表示两边的 `RELAY_SECRET` 不一致，或者 Access 没有放行 `/api/relay/inbound`。
+
+**用这个域名发信**
+
+Cloudflare Email Service 只能为主账号里的域名发信，所以这类域名要走 Resend：在 Resend 里验证域名（DNS 记录加在另一个账号里），设置 `RESEND_API_KEY`，再用变量 `RESEND_DOMAINS` 列出走 Resend 的域名（多个用英文逗号分隔），例如：
+
+```jsonc
+"vars": {
+	"DOMAINS": "example.com,other-account.com",
+	"RESEND_DOMAINS": "other-account.com"
+}
+```
+
+设置了 `RESEND_DOMAINS` 之后，只有列出的域名走 Resend，其余域名继续走 Cloudflare Email Service；不设置时，`RESEND_API_KEY` 会让所有域名都走 Resend。
+
 ## 常见问题
 
 **打开网页提示 `Access 令牌无效或已过期`**
@@ -288,6 +327,7 @@ Token 保存在你自己的 R2 存储桶里；也可以改用 Worker 密钥 `CLO
 - 提示 `domain is not verified`：这个域名还没在 Resend 里验证，见第 5 步方式 A
 - 用 Resend 免费版时，每天超过 100 封会被拒绝，第二天恢复或升级套餐
 - 没有设置 `RESEND_API_KEY` 时走的是 Cloudflare Email Service，向任意地址发信需要 Workers Paid 计划
+- 设置了 `RESEND_DOMAINS` 时，只有列出的域名走 Resend，其余域名走 Cloudflare Email Service
 
 ## 本地开发
 
@@ -303,6 +343,8 @@ npm run dev
 按照设计，任何通过了 Cloudflare Access 策略的用户都能访问本应用中的所有邮箱，包括位于 `/mcp` 的 MCP 服务器：通过 MCP 连接的外部 AI 工具（Claude Code、Cursor 等）只要传入 `mailboxId` 参数，就能操作任意邮箱。应用没有按邮箱划分的权限控制，Cloudflare Access 策略是唯一的信任边界。
 
 例外是两条 Telegram 路径：Webhook（`/api/telegram/webhook`）用注册时生成的 secret token 鉴权，查看全文（`/api/telegram/app`）用 Telegram 以机器人 Token 签名的 initData 鉴权，并且只接受已绑定的 Chat ID。因此机器人 Token 等同于读取全部邮件的凭证，泄露后应立即在 @BotFather 里用 `/revoke` 换新 Token，再到网页里重新保存。
+
+另一个例外是跨账号中继的接收入口（`/api/relay/inbound`）：它用 `RELAY_SECRET` 鉴权，只能投递邮件，不能读取任何内容。拿到这个密钥的人可以往你的收件箱里投递任意邮件，泄露后请在两边同时更换。
 
 ## 技术栈
 
